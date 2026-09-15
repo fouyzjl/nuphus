@@ -996,6 +996,12 @@ end tell"#;
         Self::result_ok(serde_json::json!({ "cleared": true }))
     }
 
+    /// Read file paths from the native clipboard (Windows CF_HDROP).
+    pub async fn clipboard_read_file_paths(&self) -> Result<Value> {
+        let paths = desk_clip::read_file_paths()?;
+        Self::result_ok(serde_json::json!({ "paths": paths }))
+    }
+
     /// Write clipboard
     pub async fn clipboard_write(&self, text: &str) -> Result<Value> {
         desk_clip::write_text(text)?;

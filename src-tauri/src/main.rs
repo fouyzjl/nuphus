@@ -291,6 +291,7 @@ fn main() {
             commands::chat_agent_update_inline,
             // -- Desktop 工具直通命令 --
             commands::desktop::desktop_mouse_position,
+            commands::desktop::desktop_clipboard_read_file_paths,
             commands::desktop::desktop_clipboard_write,
             // -- 字典 OCR 命令 --
             commands::dict_ocr::dict_ocr_analyze,

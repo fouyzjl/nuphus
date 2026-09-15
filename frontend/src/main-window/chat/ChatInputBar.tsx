@@ -794,15 +794,51 @@ export function ChatInputBar({
                 placeholder={placeholderText}
                 value={voicePartial || input}
                 onChange={handleChange}
-                onPaste={e => {
-                  // 截图/图片直接粘贴：剪贴板图片 → pendingImages（与拖拽图片同一通道）
+                onPaste={async e => {
+                  // 剪贴板截图/图片 → pendingImages；文件复制 → pendingFiles。
                   const items = e.clipboardData?.items
                   if (!items) return
-                  for (const item of items) {
-                    if (item.kind === 'file' && item.type.startsWith('image/')) {
-                      const file = item.getAsFile()
-                      if (!file) continue
-                      e.preventDefault() // 阻止图片二进制被当文本粘入
+                  // 同步固化文件列表：paste 事件一旦让出（await invoke），Chromium 会清空
+                  // clipboardData，迟到再读 items / getAsFile 只会拿到空 → 截图粘贴静默失效。
+                  const pastedFiles: File[] = []
+                  for (const item of Array.from(items)) {
+                    if (item.kind !== 'file') continue
+                    const file = item.getAsFile()
+                    if (file) pastedFiles.push(file)
+                  }
+                  if (pastedFiles.length > 0) {
+                    e.preventDefault() // 阻止图片二进制/文件被当文本粘入
+                    // 浏览器剪贴板不会暴露 Windows 资源管理器复制的绝对路径，
+                    // 通过 Tauri 原生 CF_HDROP 读取，再复用拖拽附件通道。
+                    // 位图截图没有 HDROP 条目（paths 为空）→ 落到下方 FileReader 通道。
+                    try {
+                      const { invoke } = await import('@tauri-apps/api/core')
+                      const result = await invoke<{ paths?: string[] }>(
+                        'desktop_clipboard_read_file_paths',
+                      )
+                      const paths = result.paths || []
+                      for (const path of paths) {
+                        const name = path.split('\\').pop()?.split('/').pop() || path
+                        if (isImagePath(path)) {
+                          const raw = await invoke<{ base64: string; mime: string }>(
+                            'read_image_base64',
+                            { imagePath: path },
+                          )
+                          onImageAttachRef.current({
+                            name,
+                            dataUrl: `data:${raw.mime || 'image/png'};base64,${raw.base64}`,
+                          })
+                        } else {
+                          onFileAttachRef.current?.({ path, name })
+                        }
+                      }
+                      if (paths.length > 0) return
+                    } catch (error) {
+                      console.warn('[Clipboard] 读取复制文件失败:', error)
+                    }
+                  }
+                  for (const file of pastedFiles) {
+                    if (file.type.startsWith('image/')) {
                       const reader = new FileReader()
                       reader.onload = () => {
                         const dataUrl = reader.result as string
@@ -1329,19 +1365,6 @@ export function ChatInputBar({
                       <span className="input-bar-ctx-detail-label">tok</span>
                       <span className="input-bar-ctx-value">{fmt(execTokens)}</span>
                     </span>
-                    {/* 生成速度与首 token 延迟：与常驻 speed 胶囊同源的绝对值细节 */}
-                    {ttftDisplay && (
-                      <span className="input-bar-ctx-row">
-                        <span className="input-bar-ctx-detail-label">ttft</span>
-                        <span className="input-bar-ctx-value">{ttftDisplay}</span>
-                      </span>
-                    )}
-                    {tpsDisplay && (
-                      <span className="input-bar-ctx-row">
-                        <span className="input-bar-ctx-detail-label">speed</span>
-                        <span className="input-bar-ctx-value">{tpsDisplay} tok/s</span>
-                      </span>
-                    )}
                     {/* 模型上下文容量：ctx 百分比的分母；未知(0)显示 -- 不伪装 */}
                     <span className="input-bar-ctx-row">
                       <span className="input-bar-ctx-detail-label">cap</span>
@@ -1357,6 +1380,19 @@ export function ChatInputBar({
                       <span className="input-bar-ctx-detail-label">time</span>
                       <span className="input-bar-ctx-value">{fmtDur(liveDuration)}</span>
                     </span>
+                    {/* 生成速度与首 token 延迟：放在总耗时下方，便于按时间维度阅读 */}
+                    {ttftDisplay && (
+                      <span className="input-bar-ctx-row">
+                        <span className="input-bar-ctx-detail-label">ttft</span>
+                        <span className="input-bar-ctx-value">{ttftDisplay}</span>
+                      </span>
+                    )}
+                    {tpsDisplay && (
+                      <span className="input-bar-ctx-row">
+                        <span className="input-bar-ctx-detail-label">speed</span>
+                        <span className="input-bar-ctx-value">{tpsDisplay} tok/s</span>
+                      </span>
+                    )}
                   </span>
                 )}
               </span>

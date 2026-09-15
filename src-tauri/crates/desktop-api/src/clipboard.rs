@@ -3,13 +3,55 @@
 use crate::core::*;
 
 #[cfg(windows)]
-use ::windows::Win32::Foundation::{GlobalFree, HANDLE, HWND};
+use ::windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
+#[cfg(windows)]
+use ::windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 #[cfg(windows)]
 use ::windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
 #[cfg(windows)]
 use ::windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
+
+/// 读取 Windows 文件剪贴板（CF_HDROP，格式号 15）。返回绝对路径列表。
+/// 剪贴板内容不是「文件复制」（纯文本 / 位图截图 / HTML）时返回空列表。
+#[cfg(windows)]
+pub fn read_file_paths() -> Result<Vec<String>> {
+    use ::windows::Win32::System::DataExchange::GetClipboardData;
+    use ::windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+
+    unsafe {
+        if OpenClipboard(HWND::default()).is_err() {
+            return Err(DesktopError::InputFailed("clipboard open failed".to_string()));
+        }
+        let result = GetClipboardData(15).and_then(|handle| {
+            let hglobal = HGLOBAL(handle.0 as *mut _);
+            let hdrop = HDROP(handle.0);
+            let ptr = GlobalLock(hglobal);
+            if ptr.is_null() {
+                return Err(::windows::core::Error::from_win32());
+            }
+            let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, None);
+            let mut paths = Vec::with_capacity(count as usize);
+            for index in 0..count {
+                let len = DragQueryFileW(hdrop, index, None);
+                let mut buf = vec![0u16; len as usize + 1];
+                let written = DragQueryFileW(hdrop, index, Some(&mut buf));
+                buf.truncate(written as usize);
+                paths.push(String::from_utf16_lossy(&buf));
+            }
+            let _ = GlobalUnlock(hglobal);
+            Ok(paths)
+        });
+        let _ = CloseClipboard();
+        result.map_err(|e| DesktopError::InputFailed(e.to_string()))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn read_file_paths() -> Result<Vec<String>> {
+    Err(DesktopError::PlatformNotSupported.into())
+}
 
 /// 读取剪贴板文本
 pub fn read_text() -> Result<String> {

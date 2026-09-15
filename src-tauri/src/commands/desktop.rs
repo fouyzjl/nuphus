@@ -30,6 +30,17 @@ pub async fn desktop_mouse_position() -> Result<serde_json::Value, String> {
     unwrap_result(raw)
 }
 
+/// 读取剪贴板中的文件路径（Windows CF_HDROP）。
+#[tauri::command]
+pub async fn desktop_clipboard_read_file_paths() -> Result<serde_json::Value, String> {
+    let client = nuphus::desktop::DesktopClient::new();
+    let raw = client
+        .clipboard_read_file_paths()
+        .await
+        .map_err(|e| e.to_string())?;
+    unwrap_result(raw)
+}
+
 /// 写入剪贴板
 #[tauri::command]
 pub async fn desktop_clipboard_write(text: String) -> Result<serde_json::Value, String> {
