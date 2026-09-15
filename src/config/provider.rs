@@ -14,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::api::ProviderKind;
 use crate::transports::Transport;
 
 /// Re-export ProviderConfig so that `use crate::config::provider::*` in
@@ -280,6 +281,89 @@ pub trait Provider: Send + Sync {
         )
     }
 }
+/// 本地部署端点的超时下限（秒）。
+///
+/// 依据：2026-09-15 在用户机器上**实测**（192.168.5.150，llama-swap + Qwen3.8-27B-Q8，
+/// 服务端 ctx 256K）：
+///   · prefill ≈ 1,800~2,300 tok/s（22.6K tok→10.4s、70K→38.5s、149K→64.6s）
+///   · decode  ≈ 13.5~20 tok/s
+///   ⇒ 20 万 token 上下文的提炼 ≈ 128s(prefill) + 200s(生成摘要) ≈ **5.5 分钟**
+///
+/// 900s 相对 5.5 分钟有约 2.7 倍余量；参照实现（NousResearch/hermes-agent #60744）
+/// 同样把"慢速本地模型"的压缩超时下限从 300s 提到 900s。
+///
+/// 语义是**下限**而非上限：Provider 的 `timeout_secs` 配得更大时以配置为准
+/// （与参照实现一致：the floor is a minimum, so a higher config value wins）。
+pub const LOCAL_TIMEOUT_FLOOR_SECS: u64 = 900;
+
+/// 该端点是否部署在**本机 / 局域网**（即推理速度由本地硬件决定）。
+///
+/// 为什么必须区分：本地端点的 prefill 受显存带宽限制、decode 只有十几 tok/s，
+/// 而云端有服务端排队与限流；用同一套超时口径会把本地端点按云端节奏掐死
+/// （实测：60s 的提炼墙钟对 20 万 token 的本地提炼差约 5 倍）。
+///
+/// 判据（命中任一）：
+///   · Provider 显式声明为 `ProviderKind::Local`
+///   · `base_url` 主机是本机：`localhost` / `*.localhost` / 127.0.0.0/8 / `::1` / `0.0.0.0`
+///   · `base_url` 主机是私网或链路本地地址：10/8、172.16/12、192.168/16、169.254/16
+///   · `base_url` 主机是 mDNS 名（`*.local`）
+///
+/// **必须看 `base_url`**：把局域网推理服务挂在 `provider_type = "custom"` 下是常见做法
+/// （实测配置：`custom` + `http://192.168.5.150:8080/v1`）。只判 `ProviderKind::Local`
+/// 会漏掉这类端点——它们的推理速度同样是本地硬件决定的。
+pub fn is_local_endpoint(base_url: &str, kind: Option<ProviderKind>) -> bool {
+    if matches!(kind, Some(ProviderKind::Local)) {
+        return true;
+    }
+    let Some(host) = host_of(base_url) else {
+        return false;
+    };
+    let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
+
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
+        return true;
+    }
+    // 数值型主机交给 std 判定（is_private 覆盖 10/8、172.16/12、192.168/16；
+    // is_loopback 覆盖 127/8；is_link_local 覆盖 169.254/16）。
+    // 用 IP 解析而不是前缀字符串匹配，避免把 "10.example.com" 这类域名误判为私网。
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+            }
+            std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        };
+    }
+    false
+}
+
+/// 取端点主机名（不引 `url` crate：只需 scheme/path/port/userinfo 四刀）。
+fn host_of(base_url: &str) -> Option<String> {
+    let s = base_url.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let s = s.split("://").nth(1).unwrap_or(s); // 去 scheme
+    let s = s.split(['/', '?', '#']).next()?; // 去 path/query
+    let s = s.rsplit('@').next()?; // 去 userinfo
+    if let Some(rest) = s.strip_prefix('[') {
+        // [::1]:8080
+        return rest.split(']').next().map(|h| h.to_string());
+    }
+    s.split(':').next().map(|h| h.to_string())
+}
+
+/// 本地端点取「配置值 vs 下限」的较大者；非本地原样返回配置值。
+///
+/// 调用点：传输层的 client 总超时与首 chunk 超时、提炼墙钟。
+pub fn effective_timeout_secs(base_url: &str, kind: Option<ProviderKind>, configured: u64) -> u64 {
+    if is_local_endpoint(base_url, kind) {
+        configured.max(LOCAL_TIMEOUT_FLOOR_SECS)
+    } else {
+        configured
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +506,82 @@ mod tests {
         assert_eq!(
             resolve_auth("", "", " sk-x "),
             Some(("authorization".to_string(), "Bearer sk-x".to_string()))
+        );
+    }
+
+    // ── is_local_endpoint ──
+
+    /// 实测踩过的那条配置：局域网推理服务挂在 `custom` 类型下。
+    /// 只判 `ProviderKind::Local` 会漏掉它 → 超时仍按云端 60/300s 掐死。
+    #[test]
+    fn local_endpoint_detects_lan_address_under_custom_kind() {
+        assert!(is_local_endpoint(
+            "http://192.168.5.150:8080/v1",
+            Some(ProviderKind::Custom)
+        ));
+    }
+
+    #[test]
+    fn local_endpoint_covers_loopback_private_and_mdns() {
+        for url in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8080/v1",
+            "http://127.9.9.9/v1",
+            "http://0.0.0.0:8080/v1",
+            "http://10.0.0.7/v1",
+            "http://172.16.0.1/v1",
+            "http://172.31.255.254/v1",
+            "http://192.168.0.2/v1",
+            "http://169.254.1.1/v1",
+            "http://[::1]:8080/v1",
+            "http://my-box.local:8080/v1",
+            "http://gpu.localhost:8080/v1",
+        ] {
+            assert!(is_local_endpoint(url, None), "应判为本地: {url}");
+        }
+    }
+
+    #[test]
+    fn local_endpoint_keeps_cloud_endpoints_out() {
+        for url in [
+            "https://api.deepseek.com",
+            "https://api.openai.com/v1",
+            "https://openrouter.ai/api/v1",
+            // 前缀字符串匹配的经典误判：域名以 "10." 开头但不是私网 IP
+            "https://10.example.com/v1",
+            "https://172.15.0.1/v1", // 172.15 不在私网段 172.16/12 内
+            "http://192.169.0.1/v1",
+            "",
+        ] {
+            assert!(!is_local_endpoint(url, None), "不应判为本地: {url}");
+        }
+    }
+
+    /// 显式 `Local` 类型即使 base_url 写得不规范也要算本地。
+    #[test]
+    fn local_endpoint_honours_explicit_local_kind() {
+        assert!(is_local_endpoint("", Some(ProviderKind::Local)));
+    }
+
+    /// 下限语义：本地取 max(配置, 900)，云端原样返回配置。
+    #[test]
+    fn effective_timeout_is_a_floor_only_for_local() {
+        assert_eq!(
+            effective_timeout_secs("http://192.168.5.150:8080/v1", None, 300),
+            900
+        );
+        // 配置值更高时以配置为准（floor 是下限，不是上限）
+        assert_eq!(
+            effective_timeout_secs("http://192.168.5.150:8080/v1", None, 1800),
+            1800
+        );
+        assert_eq!(
+            effective_timeout_secs("https://api.deepseek.com", None, 300),
+            300
+        );
+        assert_eq!(
+            effective_timeout_secs("https://api.deepseek.com", None, 60),
+            60
         );
     }
 }

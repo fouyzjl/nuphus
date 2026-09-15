@@ -7,6 +7,33 @@ use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+/// 流式/分段读响应时**块与块之间**的超时：服务端中途停顿（SSE 断流、半开连接）的防御。
+///
+/// ⚠️ 这是"块间"超时，**不是**"首个 chunk"超时。首 chunk 之前服务端在做 prefill
+/// （可能是几十万 token、本地卡上要一两分钟），拿这根 60s 尺子量首 chunk 会把
+/// 长上下文请求误杀——实测根因。首个 chunk 的预算见 `first_chunk_timeout`。
+const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 本地端点的首 chunk 预算 = 该端点的整体请求超时（`effective_timeout_secs`，
+/// 下限 `LOCAL_TIMEOUT_FLOOR_SECS` = 900s）。非本地端点沿用 `CHUNK_TIMEOUT`。
+fn first_chunk_timeout(config: &ChatCompletionsConfig) -> Duration {
+    if crate::config::provider::is_local_endpoint(&config.base_url, config.provider_kind) {
+        request_timeout(config)
+    } else {
+        CHUNK_TIMEOUT
+    }
+}
+
+/// 整体请求超时（reqwest client 的 total timeout，覆盖到响应体读完为止）。
+/// 本地端点走下限语义：`max(配置值, LOCAL_TIMEOUT_FLOOR_SECS)`。
+fn request_timeout(config: &ChatCompletionsConfig) -> Duration {
+    Duration::from_secs(crate::config::provider::effective_timeout_secs(
+        &config.base_url,
+        config.provider_kind,
+        config.timeout_secs,
+    ))
+}
+
 /// Read cache hit tokens from usage JSON, using provider-specific field name.
 /// Falls back to OpenAI standard `prompt_tokens_details.cached_tokens` when field is empty.
 fn read_cache_hit(usage: &serde_json::Value, field: &str) -> u32 {
@@ -107,7 +134,7 @@ impl ChatCompletionsTransport {
 
             let mut client_builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(self.config.timeout_secs))
+                .timeout(request_timeout(&self.config))
                 .pool_max_idle_per_host(0);
 
             // 先直连，连不上再 fallback 到代理
@@ -196,7 +223,10 @@ impl ChatCompletionsTransport {
             let stream_start = std::time::Instant::now();
             let mut total_chunks = 0u64;
             let mut last_bytes_len = 0usize;
-            const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+            // 首 chunk 的预算与块间分开：首 chunk 之前服务端在做 prefill，
+            // 本地长上下文可达一两分钟，用 60s 的块间尺子量会误杀（实测根因）。
+            let first_budget = first_chunk_timeout(&self.config);
+            let mut first_chunk = true;
             {
                 let mut stream = response.bytes_stream();
                 use futures_util::StreamExt;
@@ -208,7 +238,13 @@ impl ChatCompletionsTransport {
                         }
                     }
                     // Per-chunk timeout: prevents hang when server pauses between SSE chunks
-                    let timed = tokio::time::timeout(CHUNK_TIMEOUT, stream.next()).await;
+                    let budget = if first_chunk {
+                        first_budget
+                    } else {
+                        CHUNK_TIMEOUT
+                    };
+                    first_chunk = false;
+                    let timed = tokio::time::timeout(budget, stream.next()).await;
                     let chunk = match timed {
                         Ok(Some(Ok(b))) => b,
                         Ok(Some(Err(e))) => {
@@ -357,7 +393,7 @@ impl ChatCompletionsTransport {
 
             let mut client_builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(self.config.timeout_secs))
+                .timeout(request_timeout(&self.config))
                 .pool_max_idle_per_host(0);
 
             // 先直连，连不上再 fallback 到代理
@@ -469,7 +505,9 @@ impl ChatCompletionsTransport {
             {
                 use futures_util::StreamExt;
                 let mut stream = response.bytes_stream();
-                const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+                // 同 send_chat_request：首 chunk 用 prefill 预算，块间才是 60s 卡死防御
+                let first_budget = first_chunk_timeout(&self.config);
+                let mut first_chunk = true;
 
                 loop {
                     if let Some(flag) = cancel_flag {
@@ -478,7 +516,13 @@ impl ChatCompletionsTransport {
                         }
                     }
 
-                    let timed = tokio::time::timeout(CHUNK_TIMEOUT, stream.next()).await;
+                    let budget = if first_chunk {
+                        first_budget
+                    } else {
+                        CHUNK_TIMEOUT
+                    };
+                    first_chunk = false;
+                    let timed = tokio::time::timeout(budget, stream.next()).await;
                     let chunk = match timed {
                         Ok(Some(Ok(b))) => b,
                         Ok(Some(Err(e))) => {

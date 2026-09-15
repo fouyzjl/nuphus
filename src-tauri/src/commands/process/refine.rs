@@ -25,6 +25,35 @@ impl EventEmitter for RefineStreamFilter {
     }
 }
 
+/// 提炼的墙钟预算（秒）。
+///
+/// 云端沿用原来的值（Leader 90s / Workflow 60s，**行为不变**）；**本地端点**
+/// （本机/局域网推理服务）改用 provider 配置超时的下限语义：
+/// `max(配置的 timeout_secs, LOCAL_TIMEOUT_FLOOR_SECS)`，再加 60s 余量，
+/// 好让传输层自己的超时先报错（错误信息更准确：是"请求超时"而不是"提炼超时"）。
+///
+/// 依据（实测，192.168.5.150 llama-swap + Qwen3.8-27B-Q8 / 256K ctx）：
+/// prefill ≈ 2,000 tok/s、decode ≈ 15 tok/s ⇒ 20 万 token 上下文提炼 ≈ 5.5 分钟，
+/// 原 60/90s 差约 5 倍。详见 `nuphus::config::provider::LOCAL_TIMEOUT_FLOOR_SECS`。
+fn refine_timeout_secs(state: &tauri::State<'_, AppState>, cloud_default: u64) -> u64 {
+    let (base_url, provider) = {
+        let Ok(guard) = state.runtime.lock() else {
+            return cloud_default;
+        };
+        match guard.llm_config.as_ref() {
+            Some(cfg) => (cfg.base_url.clone(), cfg.provider.clone()),
+            None => return cloud_default,
+        }
+    };
+    if !nuphus::config::provider::is_local_endpoint(&base_url, None) {
+        return cloud_default;
+    }
+    let configured =
+        crate::commands::config::read_provider_timeout_secs_from_config_toml(&provider)
+            .unwrap_or(300);
+    nuphus::config::provider::effective_timeout_secs(&base_url, None, configured) + 60
+}
+
 pub async fn execute_session_refine<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
@@ -129,12 +158,13 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
         if let Some(ref e) = saved_emitter {
             rt_owned.restore_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
         }
+        let budget = refine_timeout_secs(&state, 90);
         let result = tokio::time::timeout(
-            std::time::Duration::from_secs(90),
+            std::time::Duration::from_secs(budget),
             rt_owned.resume(refine_prompt, &cancel_flag),
         )
         .await
-        .map_err(|_| "提炼超时（90s）".to_string())
+        .map_err(|_| format!("提炼超时（{budget}s）"))
         .and_then(|r| r.map_err(|e| e.to_string()));
         let _ = rt_owned.take_emitter(); // 丢弃过滤器
         rt_owned.restore_emitter(saved_emitter);
@@ -235,12 +265,13 @@ async fn execute_workflow_refine<R: tauri::Runtime, E: EventEmitter>(
         if let Some(ref e) = saved_emitter {
             wa_owned.set_emitter(Some(Arc::new(RefineStreamFilter { inner: e.clone() })));
         }
+        let budget = refine_timeout_secs(&state, 60);
         let result = tokio::time::timeout(
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(budget),
             wa_owned.run(refine_prompt, &None, cancel_flag),
         )
         .await
-        .map_err(|_| "提炼超时（60s）".to_string())
+        .map_err(|_| format!("提炼超时（{budget}s）"))
         .and_then(|r| r.map_err(|e| e.to_string()));
         let _ = wa_owned.take_emitter(); // 丢弃过滤器
         wa_owned.set_emitter(saved_emitter);
