@@ -1132,83 +1132,81 @@ export function ModelsPage({
                     </div>
 
                     {/* 密钥栏：远程服务商必填；本地服务可选（llama-swap 等启用鉴权时需要） */}
-                    {
-                      <FormRow
-                        stacked
-                        label={
-                          <span className="models-field-label">
-                            <IconPlug size={12} className="icon-prefix" />
-                            {TXT.apiKeyLabel}
-                            {hasKey && <span className="model-badge label-badge">已配置</span>}
-                          </span>
-                        }
-                        hint={isLocal ? TXT.keyHelpLocal : TXT.keyHelp}
-                        control={
-                          <div className="models-key-row">
-                            <div className="models-key-field">
-                              <input
-                                className="compact-input"
-                                type={showKey ? 'text' : 'password'}
-                                value={apiKey}
-                                onChange={e => {
-                                  setApiKey(e.target.value)
-                                  setDetectError(null)
-                                }}
-                                placeholder={
-                                  hasKey
-                                    ? TXT.keyOverwritePlaceholder
-                                    : isLocal
-                                      ? TXT.keyPlaceholderLocal
-                                      : TXT.keyInputPlaceholder(curProvider?.name || provider)
-                                }
-                              />
-                              <button
-                                type="button"
-                                className="models-key-eye"
-                                onClick={() => setShowKey(v => !v)}
-                                tabIndex={-1}
-                                title={showKey ? TXT.keyHide : TXT.keyShow}
-                                aria-label={showKey ? TXT.keyHide : TXT.keyShow}
-                              >
-                                {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                              </button>
-                            </div>
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              onClick={detectModels}
-                              disabled={detecting || (!isLocal && !apiKey.trim())}
-                              title={TXT.connectTitle}
+                    <FormRow
+                      stacked
+                      label={
+                        <span className="models-field-label">
+                          <IconPlug size={12} className="icon-prefix" />
+                          {TXT.apiKeyLabel}
+                          {hasKey && <span className="model-badge label-badge">已配置</span>}
+                        </span>
+                      }
+                      hint={isLocal ? TXT.keyHelpLocal : TXT.keyHelp}
+                      control={
+                        <div className="models-key-row">
+                          <div className="models-key-field">
+                            <input
+                              className="compact-input"
+                              type={showKey ? 'text' : 'password'}
+                              value={apiKey}
+                              onChange={e => {
+                                setApiKey(e.target.value)
+                                setDetectError(null)
+                              }}
+                              placeholder={
+                                hasKey
+                                  ? TXT.keyOverwritePlaceholder
+                                  : isLocal
+                                    ? TXT.keyPlaceholderLocal
+                                    : TXT.keyInputPlaceholder(curProvider?.name || provider)
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="models-key-eye"
+                              onClick={() => setShowKey(v => !v)}
+                              tabIndex={-1}
+                              title={showKey ? TXT.keyHide : TXT.keyShow}
+                              aria-label={showKey ? TXT.keyHide : TXT.keyShow}
                             >
-                              {detecting ? TXT.connecting : TXT.connectBtn}
-                            </Button>
-                            {/* 显式保存入口：key 原本只在「点击可用模型」时才落盘，
-                                鉴权失败（可用模型列表为空）时用户找不到任何保存按钮 */}
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={saveKey}
-                              disabled={savingKey || !apiKey.trim()}
-                              title={TXT.saveKeyTitle}
-                            >
-                              {savingKey ? TXT.savingKey : TXT.saveKeyBtn}
-                            </Button>
-                            {hasKey && (
-                              <button
-                                type="button"
-                                className="models-key-clear"
-                                onClick={handleClearKey}
-                                disabled={clearingKey}
-                                title={TXT.clearKeyTitle}
-                                aria-label={TXT.clearKeyTitle}
-                              >
-                                <IconBrushCleaning size={13} />
-                              </button>
-                            )}
+                              {showKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                            </button>
                           </div>
-                        }
-                      />
-                    }
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={detectModels}
+                            disabled={detecting || (!isLocal && !apiKey.trim())}
+                            title={TXT.connectTitle}
+                          >
+                            {detecting ? TXT.connecting : TXT.connectBtn}
+                          </Button>
+                          {/* 显式保存入口：key 原本只在「点击可用模型」时才落盘，
+                                鉴权失败（可用模型列表为空）时用户找不到任何保存按钮 */}
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={saveKey}
+                            disabled={savingKey || !apiKey.trim()}
+                            title={TXT.saveKeyTitle}
+                          >
+                            {savingKey ? TXT.savingKey : TXT.saveKeyBtn}
+                          </Button>
+                          {hasKey && (
+                            <button
+                              type="button"
+                              className="models-key-clear"
+                              onClick={handleClearKey}
+                              disabled={clearingKey}
+                              title={TXT.clearKeyTitle}
+                              aria-label={TXT.clearKeyTitle}
+                            >
+                              <IconBrushCleaning size={13} />
+                            </button>
+                          )}
+                        </div>
+                      }
+                    />
 
                     {detectError && <div className="detect-error">{detectError}</div>}
 

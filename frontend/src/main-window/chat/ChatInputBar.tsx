@@ -1313,10 +1313,29 @@ export function ChatInputBar({
                   {ctxLimit > 0 && <span className="input-bar-ctx-sep">/</span>}
                   {ctxLimit > 0 && <span className="input-bar-ctx-cap">{fmt(ctxLimit)}</span>}
                 </span>
+                {/* 解码速度：ctx 模块内的次级读数（同属模型运行态），不另开状态栏胶囊 */}
+                {tpsDisplay && (
+                  <>
+                    <span className="input-bar-ctx-sep" aria-hidden="true">
+                      ·
+                    </span>
+                    <span
+                      className="input-bar-ctx-speed"
+                      title={
+                        ttftDisplay
+                          ? `${t('status.speedTooltip', tpsDisplay)} · ${t('status.ttftTooltip', ttftDisplay)}`
+                          : t('status.speedTooltip', tpsDisplay)
+                      }
+                    >
+                      {tpsDisplay} tok/s
+                    </span>
+                  </>
+                )}
                 {ctxHover && (
                   <span className="input-bar-ctx-detail">
-                    {/* 五行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
-                      cache 命中详情 + step 步数 + time 时长——hover 提供主显示缺失的「绝对值与执行细节」 */}
+                    {/* 七行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
+                      cache 命中详情 + step 步数 + time 时长 + ttft 首 token 延迟 + speed 解码速度
+                      ——hover 提供主显示缺失的「绝对值与执行细节」 */}
                     {cacheRate >= 0 && (
                       <span className="input-bar-ctx-row is-strong">
                         <span className="input-bar-ctx-detail-label">cache</span>
@@ -1330,7 +1349,7 @@ export function ChatInputBar({
                     {/* 生成速度与首 token 延迟：与常驻 speed 胶囊同源的绝对值细节 */}
                     {ttftDisplay && (
                       <span className="input-bar-ctx-row">
-                        <span className="input-bar-ctx-detail-label">TTFT</span>
+                        <span className="input-bar-ctx-detail-label">ttft</span>
                         <span className="input-bar-ctx-value">{ttftDisplay}</span>
                       </span>
                     )}
@@ -1358,21 +1377,6 @@ export function ChatInputBar({
                   </span>
                 )}
               </span>
-              {tpsDisplay && (
-                <>
-                  <span className="input-bar-status-sep" aria-hidden="true" />
-                  <span
-                    style={{ color: '#06b6d4', fontVariantNumeric: 'tabular-nums' }}
-                    title={
-                      ttftDisplay
-                        ? `${t('status.speedTooltip', tpsDisplay)} · ${t('status.ttftTooltip', ttftDisplay)}`
-                        : t('status.speedTooltip', tpsDisplay)
-                    }
-                  >
-                    {tpsDisplay} tok/s
-                  </span>
-                </>
-              )}
               {apiHealth && (
                 <>
                   <span className="input-bar-status-sep" aria-hidden="true" />
