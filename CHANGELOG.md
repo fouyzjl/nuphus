@@ -18,6 +18,9 @@
 ### Added
 - 模型页密钥栏对本地服务商开放：可留空直接连接；服务启用鉴权时（llama-swap、带 key 的网关或反向代理）在此填写后再连接。
 - 模型页新增「仅保存密钥」按钮：key 此前只在「点击可用模型」那一步经 `configureLlm` 落盘，服务端鉴权失败、可用模型列表为空时，用户填了 key 却找不到任何保存入口。现以该服务商当前模型（否则已配置的首个模型）作为落盘目标，不依赖「连接」是否成功。
+- 状态栏展示解码速度与首 token 延迟：`TokenUsage` 事件新增可选字段 `gen_tps` / `ttft_ms`（`serde(default, skip_serializing_if)`，字段缺失与旧端反序列化均兼容）。速度按「输出 tokens ÷ 首 token→结束耗时」计算，把网络、排队与 prefill 从解码速度中剥离，与 llama.cpp 报告的 decode 速度同口径；TTFT 单独展示。目前仅 Leader 的流式调用（`react_loop`）产出数据，sub-agent 与 workflow 路径固定为 `None`（后续按需接入）。
+
+ (docs(changelog): 记录速度 / TTFT 指标)
 
 ## [0.2.12] - 2026-09-12
 
