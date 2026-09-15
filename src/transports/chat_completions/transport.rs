@@ -7,6 +7,34 @@ use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+/// 流式请求的**有界反馈**阈值（并列提取，便于统一调整）。
+///
+/// 二者都只约束「无数据」的时长，不约束请求总时长——持续有 chunk 产出的慢速生成
+/// （实测 2.97 tok/s 的上游）不会被误杀：
+/// - `FIRST_CHUNK_TIMEOUT`：请求发出 → 收到响应头；超时即判定上游无响应；
+/// - `CHUNK_TIMEOUT`：已开流 → 下一个 chunk（idle 超时）；超时即判定流卡死。
+///
+/// 任一超时都会向前端推送 `ConnectionStatus` 可见提示（仅在确实要重试时）并进入下一次尝试。
+const FIRST_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 流式请求的最大尝试次数（含首次）。
+/// 提示文案「（第 n/N 次）」与该值同源，改这里两处一起生效。
+const MAX_STREAM_ATTEMPTS: usize = 4;
+
+/// 上游静默（无响应头 / 无新 chunk）导致重试时的前端提示文案。
+///
+/// `attempt` 为 0-based 轮次，展示用 `attempt + 1`（1-based），
+/// 让用户知道系统仍在推进，而不是「静默卡死」。
+fn silence_retry_notice(timeout: Duration, attempt: usize) -> String {
+    format!(
+        "服务端 {}s 无响应，正在重试（第 {}/{} 次）",
+        timeout.as_secs(),
+        attempt + 1,
+        MAX_STREAM_ATTEMPTS
+    )
+}
+
 /// Read cache hit tokens from usage JSON, using provider-specific field name.
 /// Falls back to OpenAI standard `prompt_tokens_details.cached_tokens` when field is empty.
 fn read_cache_hit(usage: &serde_json::Value, field: &str) -> u32 {
@@ -38,21 +66,19 @@ impl ChatCompletionsTransport {
         self
     }
 
+    /// 首包阈值（请求发出 → 收到响应头）
+    fn first_chunk_timeout(&self) -> Duration {
+        FIRST_CHUNK_TIMEOUT
+    }
+
+    /// idle 阈值（已开流 → 下一个 chunk）
+    fn idle_chunk_timeout(&self) -> Duration {
+        CHUNK_TIMEOUT
+    }
+
     /// 判断错误是否为网络连接层错误（TCP/DNS/TLS），而非 HTTP 服务端错误
-    fn is_connection_error(err_str: &str) -> bool {
-        let e = err_str.to_lowercase();
-        e.contains("connect")
-            || e.contains("timeout")
-            || e.contains("timed out")
-            || e.contains("dns")
-            || e.contains("tls")
-            || e.contains("refused")
-            || e.contains("reset")
-            || e.contains("eof")
-            || e.contains("broken pipe")
-            || e.contains("no route to host")
-            || e.contains("network unreachable")
-            || e.contains("name or service not known")
+    fn is_connection_error(error: &reqwest::Error) -> bool {
+        error.is_connect() || error.is_timeout() || error.is_request()
     }
 
     /// Send chat.completions request with retry on transient errors.
@@ -71,6 +97,7 @@ impl ChatCompletionsTransport {
         let mut use_proxy = false;
         let mut connection_errors = 0u32;
         let max_connection_retries: u32 = 2;
+        let mut last_error_is_connection = false;
 
         // Log summary
         if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
@@ -94,8 +121,7 @@ impl ChatCompletionsTransport {
             }
 
             if attempt > 0 {
-                let is_conn_err = Self::is_connection_error(&last_error);
-                let delay: u64 = if is_conn_err {
+                let delay: u64 = if last_error_is_connection {
                     connection_errors as u64 // 1s, 2s
                 } else {
                     2u64.pow(attempt as u32) // 2s, 4s, 8s
@@ -164,7 +190,8 @@ impl ChatCompletionsTransport {
             let response = match req.json(&body).send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    let is_connect_err = e.is_connect() || e.is_timeout();
+                    let is_connect_err = Self::is_connection_error(&e);
+                    last_error_is_connection = is_connect_err;
                     last_error = format!("Request failed: {}", e);
                     if e.is_timeout() {
                         tracing::warn!(
@@ -172,7 +199,7 @@ impl ChatCompletionsTransport {
                             "LLM API request timeout"
                         );
                     }
-                    if Self::is_connection_error(&last_error) {
+                    if is_connect_err {
                         connection_errors += 1;
                         if connection_errors > max_connection_retries {
                             break;
@@ -330,16 +357,26 @@ impl ChatCompletionsTransport {
         let mut use_proxy = false;
         let mut connection_errors = 0u32;
         let max_connection_retries: u32 = 2;
+        // 上一轮失败是否由「上游静默」（无响应头 / 无 chunk）导致。
+        // 静默不计入连接错误封顶计数——它已含 60s 前置等待，不应再缩短尝试次数。
+        let mut last_error_was_silence = false;
+        let mut last_error_is_connection = false;
 
-        for attempt in 0..4 {
+        for attempt in 0..MAX_STREAM_ATTEMPTS {
             if let Some(flag) = cancel_flag {
                 if flag.load(Ordering::SeqCst) {
                     return Err(crate::NuphusError::LLM(crate::LLMError::Cancelled));
                 }
             }
 
+            // 本次失败后是否还有下一次尝试：最后一轮不发「正在重试」提示（文案不符）。
+            let will_retry = attempt + 1 < MAX_STREAM_ATTEMPTS;
+
             if attempt > 0 {
-                let is_conn_err = Self::is_connection_error(&last_error);
+                let is_conn_err = !last_error_was_silence && last_error_is_connection;
+                // 分类只消费一次，进入本轮前复位
+                last_error_was_silence = false;
+                last_error_is_connection = false;
                 let delay: u64 = if is_conn_err {
                     connection_errors as u64 // 1s, 2s
                 } else {
@@ -347,17 +384,21 @@ impl ChatCompletionsTransport {
                 };
                 let preview: String = last_error.chars().take(80).collect();
                 tracing::warn!(
-                    "[STREAM] Retry {}/3 after {}s ({})",
-                    attempt,
+                    "[STREAM] attempt {}/{} after {}s ({})",
+                    attempt + 1,
+                    MAX_STREAM_ATTEMPTS,
                     delay,
                     preview
                 );
                 tokio::time::sleep(Duration::from_secs(delay)).await;
             }
 
+            // 无 `.timeout()` 总时长超时：reqwest 的 `.timeout()` 语义是
+            // 「开始连接 → 响应体读完」的**总超时**，会误杀合法的长流式回答
+            // （慢上游 3 tok/s 生成 1000 tokens 需 ~337s，必然撞上 300s 被杀 → 重试 → 用户看到「卡住后重来」）。
+            // 有界性改由两个「无数据」超时保证：FIRST_CHUNK_TIMEOUT（响应头）+ CHUNK_TIMEOUT（chunk 间隔）。
             let mut client_builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(self.config.timeout_secs))
                 .pool_max_idle_per_host(0);
 
             // 先直连，连不上再 fallback 到代理
@@ -403,18 +444,24 @@ impl ChatCompletionsTransport {
                     req = req.header(k, v);
                 }
             }
-            let response = match req.json(&body).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    let is_connect_err = e.is_connect() || e.is_timeout();
+            let response = match tokio::time::timeout(
+                self.first_chunk_timeout(),
+                req.json(&body).send(),
+            )
+            .await
+            {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    let is_connect_err = Self::is_connection_error(&e);
+                    last_error_is_connection = is_connect_err;
                     last_error = format!("Request failed: {}", e);
                     if e.is_timeout() {
                         tracing::warn!(
-                            timeout_s = self.config.timeout_secs,
+                            timeout_s = self.first_chunk_timeout().as_secs(),
                             "LLM API streaming request timeout"
                         );
                     }
-                    if Self::is_connection_error(&last_error) {
+                    if is_connect_err {
                         connection_errors += 1;
                         if connection_errors > max_connection_retries {
                             break;
@@ -430,6 +477,23 @@ impl ChatCompletionsTransport {
                             );
                             use_proxy = true;
                         }
+                    }
+                    continue;
+                }
+                Err(_) => {
+                    last_error = format!(
+                        "First response timeout after {}s",
+                        self.first_chunk_timeout().as_secs()
+                    );
+                    tracing::error!(
+                        timeout_s = self.first_chunk_timeout().as_secs(),
+                        "LLM API first response timeout"
+                    );
+                    if will_retry {
+                        emitter(AssistantEvent::ConnectionStatus(silence_retry_notice(
+                            self.first_chunk_timeout(),
+                            attempt,
+                        )));
                     }
                     continue;
                 }
@@ -465,11 +529,11 @@ impl ChatCompletionsTransport {
             // text/tool_calls behind the cut. Downstream must distinguish this from a
             // clean MessageStop (previously a fake-success / empty-delivery source).
             let mut finish_reason_length = false;
+            let mut stream_was_silent = false;
 
             {
                 use futures_util::StreamExt;
                 let mut stream = response.bytes_stream();
-                const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
                 loop {
                     if let Some(flag) = cancel_flag {
@@ -478,7 +542,7 @@ impl ChatCompletionsTransport {
                         }
                     }
 
-                    let timed = tokio::time::timeout(CHUNK_TIMEOUT, stream.next()).await;
+                    let timed = tokio::time::timeout(self.idle_chunk_timeout(), stream.next()).await;
                     let chunk = match timed {
                         Ok(Some(Ok(b))) => b,
                         Ok(Some(Err(e))) => {
@@ -488,12 +552,15 @@ impl ChatCompletionsTransport {
                         }
                         Ok(None) => break,
                         Err(_) => {
-                            last_error =
-                                format!("Chunk read timeout after {}s", CHUNK_TIMEOUT.as_secs());
+                            last_error = format!(
+                                "Chunk read timeout after {}s",
+                                self.idle_chunk_timeout().as_secs()
+                            );
                             tracing::error!(
-                                timeout_s = CHUNK_TIMEOUT.as_secs(),
+                                timeout_s = self.idle_chunk_timeout().as_secs(),
                                 "LLM stream chunk timeout"
                             );
+                            stream_was_silent = true;
                             break;
                         }
                     };
@@ -735,6 +802,15 @@ impl ChatCompletionsTransport {
                     }
                     emitter(AssistantEvent::MessageStop);
                     return Ok(());
+                }
+                if stream_was_silent {
+                    last_error_was_silence = true;
+                    if will_retry {
+                        emitter(AssistantEvent::ConnectionStatus(silence_retry_notice(
+                            self.idle_chunk_timeout(),
+                            attempt,
+                        )));
+                    }
                 }
                 continue;
             }
