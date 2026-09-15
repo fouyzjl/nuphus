@@ -128,11 +128,10 @@ const zh: Record<string, string> = {
   'extAgents.deliver.cancelBtn': '取消',
   'extAgents.deliver.deleteFail': '删除失败',
 
-  // ── Session Rail（会话展示台）──
-  'sessionRail.title': '会话展示台',
-  'sessionRail.guideTitle': '会话工作台',
+  // ── Session Rail（会话工作台：左缘色块 + 滑动抽屉）──
+  'sessionRail.title': '会话工作台',
+  'sessionRail.collapse': '收起',
   'sessionRail.newChat': '新建对话',
-  'sessionRail.newChatLabel': '新建',
   'sessionRail.busyHint': '执行中不可切换，可发送追加指令或等待完成',
   'sessionRail.rename': '重命名会话标题',
   'sessionRail.save': '保存',

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { IconCheck, IconEdit3, IconX, IconTrash2 } from '../../ui/Icons'
+import {
+  IconCheck,
+  IconEdit3,
+  IconHistory,
+  IconPlus,
+  IconTrash2,
+  IconX,
+} from '../../ui/Icons'
 import { playUiSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
 import { useLanguage } from '../../locales'
@@ -23,12 +30,12 @@ interface SessionRailProps {
   /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
   onNewChat?: () => void
   /** 跨 mode 会话切换成功后同步前端 mode state（后端原子切换不单独广播 mode_changed，
-   *   mode chip 依赖此回调保持一致） */
+   *  mode chip 依赖此回调保持一致） */
   onModeSwitched?: (mode: string) => void
-  /** 后端执行态实时镜像（App isProcessing）：执行中滑块隐藏、hover 不唤出 */
+  /** 后端执行态实时镜像（App isProcessing）：执行中条目禁用（后端 guard 双保险） */
   locked?: boolean
   /** 当前情绪（App mood）：执行错误（'error'）时结束翻转不播完成音效，
-   *   避免与 execution_error 的错误音效重叠 */
+   *  避免与 execution_error 的错误音效重叠 */
   mood?: string
 }
 
@@ -50,7 +57,7 @@ function codeToTone(code: string): NoticeTone {
   return 'error'
 }
 
-/** mode → 书签首字母（书签唯一信息，类型识别开关） */
+/** mode → 收起色块首字母（收起态唯一信息，类型识别开关） */
 function modeToLetter(mode: string): string {
   if (mode === 'workflow') return 'W'
   if (mode === 'leader') return 'L'
@@ -96,13 +103,13 @@ function NoticeIcon({ tone }: { tone: NoticeTone }) {
 }
 
 /**
- * 会话展示台（Session Rail）：输入框区域左缘的感应式竖排横杠。
- * - 数据源：list_shelf_sessions（5s 轮询 + 页面可见性刷新），active 置顶。
- * - 静止态仅微露短杠；hover 感应区阶梯展开（20ms/条 stagger）；单条 hover 弹出
- *   玻璃气泡显示标题，气泡内可重命名（Enter 保存 / Esc 取消）。
- * - 点击横杠切换会话（busy / 追加队列非空时后端拒绝 → 错误码映射文案短暂浮现，
- *   横杠同步 shake）。新建对话入口在 TitleBar 与 Ctrl+N（底部无虚线杠）。
- * - 执行中整轨降透明度锁定（can_switch），与后端守卫双保险。
+ * 会话工作台（Session Rail）：聊天面板左缘的滑动抽屉。
+ * - 收起态：左缘常驻一枚色块（会话图标 + 当前会话 mode 首字母），是唯一可见元素。
+ * - 展开态：点击色块 → 左侧列表滑出（标题 + 预览 + 重命名 / 归档全在这里可见）。
+ * - 开合入口只有三个：色块点击、面板外点击、Esc；**不做 hover 感应唤出，
+ *   执行完成也不自动弹出**（2026-09-15 大王反馈：隐藏式选择看不到会话标题）。
+ * - 数据源与切换逻辑完全沿用：list_shelf_sessions（5s 轮询 + 可见性刷新），
+ *   busy / 追加队列非空时后端拒绝 → 错误码映射文案在抽屉底部短暂浮现。
  */
 export default function SessionRail({
   onSessionChanged,
@@ -120,6 +127,10 @@ export default function SessionRail({
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 手动归档确认弹窗目标会话 id（null = 关闭） */
   const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null)
+  /** 抽屉开合态：默认收起（只露色块），点击色块才伸出 */
+  const [open, setOpen] = useState(false)
+  const chipRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
   const stoppedRef = useRef(false)
   /** 外部会话变化检测基准：上轮轮询的 active 会话 id（null=无 active；首轮回填不触发） */
   const lastActiveIdRef = useRef<string | null>(null)
@@ -130,62 +141,62 @@ export default function SessionRail({
   const lastFireAtRef = useRef(0)
   /** 列表签名：上轮渲染数据指纹（id+active+标题+顺序），结构未变不重绘 */
   const listSigRef = useRef('')
-  /** 整轨隐显：默认隐身，左缘感应区唤醒；移开 10s 后渐隐 */
-  const [revealed, setRevealed] = useState(false)
-  const [fading, setFading] = useState(false)
-  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** 编辑中镜像：渐隐定时器回调里读最新值，避免闭包过期 */
-  const editingRef = useRef(false)
 
-  // ── 执行态锁定：canSwitch（轮询后端权威）或 locked（实时镜像）任一执行中 → 滑块隐藏 ──
+  // ── 执行态锁定：canSwitch（轮询后端权威）或 locked（实时镜像）任一执行中 → 条目禁用 ──
   const hardLocked = !canSwitch || locked
-  const hardLockedRef = useRef(hardLocked)
-  useEffect(() => {
-    hardLockedRef.current = hardLocked
-  }, [hardLocked])
+
   // 翻转方向检测：记录上一帧 hardLocked，区分「执行开始」（false→true）与
   // 「执行完成」（true→false）——初始挂载 false→false 不触发任何动作
   const prevHardLockedRef = useRef(hardLocked)
-  // 执行开始 → 立即收起；执行完成（true→false 翻转）→ 立即弹出，与 HUD「执行完成」
-  // 同步推送完成状态（2026-08-31 修正：此前完成时不主动 reveal，等鼠标移入感应区/
-  // 轮询才弹出，而 10s 渐隐倒计时早已启动 → 刚弹出又隐藏；现在完成瞬间 reveal 并
-  // 清除旧倒计时重新计时，用户能立即看到结果会话）
   useEffect(() => {
     const was = prevHardLockedRef.current
     prevHardLockedRef.current = hardLocked
     if (hardLocked) {
-      if (leaveTimer.current) {
-        clearTimeout(leaveTimer.current)
-        leaveTimer.current = null
-      }
-      if (fadeTimer.current) {
-        clearTimeout(fadeTimer.current)
-        fadeTimer.current = null
-      }
-      setRevealed(false)
-      setFading(false)
+      // 执行开始：收起抽屉（执行期面板只读，不遮挡消息流）
+      setOpen(false)
       setEditingId(null)
     } else if (was) {
-      // 执行完成：弹出会话台（清除 10s 渐隐倒计时重新计时；鼠标移出感应区才重新计时）。
-      // 错误结束（mood='error'）不播完成音效——execution_error 已播错误音效，避免重叠
+      // 执行完成：只播完成音效，不再自动弹出工作台（大王 2026-09-15：完成也不自动弹出）。
+      // 错误结束（mood='error'）不播完成音——execution_error 已播错误音效，避免重叠
       if (mood !== 'error') playUiSound('done')
-      if (leaveTimer.current) {
-        clearTimeout(leaveTimer.current)
-        leaveTimer.current = null
-      }
-      if (fadeTimer.current) {
-        clearTimeout(fadeTimer.current)
-        fadeTimer.current = null
-      }
-      setRevealed(true)
-      setFading(false)
     }
-  }, [hardLocked])
+  }, [hardLocked, mood])
 
+  // 收起抽屉：保留编辑态草稿（重新展开后仍在编辑中），不做静默丢弃
+  const closeDrawer = useCallback(() => setOpen(false), [])
+
+  // 抽屉展开期：Esc 收起（编辑中先退编辑）、点击面板与色块之外收起
   useEffect(() => {
-    editingRef.current = editingId !== null
-  }, [editingId])
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (editingId) {
+        setEditingId(null)
+        return
+      }
+      setOpen(false)
+    }
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node | null
+      if (!target) return
+      if (panelRef.current?.contains(target)) return
+      if (chipRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [open, editingId])
+
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current)
+    },
+    [],
+  )
 
   /** onSessionChanged 经 ref 间接持有：保持 refresh 引用稳定（deps 不加回调），
    *  否则父组件每次渲染重建回调会导致轮询 effect 反复重启 */
@@ -222,8 +233,7 @@ export default function SessionRail({
         // 会因基准过期误判为外部变更，必然整表重拉（实测 2026-08-25）。
         const flip = prevCanSwitchRef.current !== canSwitch
         prevCanSwitchRef.current = canSwitch
-        // 执行完成弹出由 hardLocked effect 负责（2026-08-31 起与 HUD 同步、实时）；
-        // 此处轮询仍不做整表重拉/外部变更误判，flip 轮只校准基准不触发（2026-08-25）。
+        // 执行完成不再有弹窗/弹层动作；此处轮询只做整表重拉判定，flip 轮只校准基准
         const activeId = list.find(i => i.is_active)?.id ?? null
         if (flip) {
           lastActiveIdRef.current = activeId
@@ -313,6 +323,8 @@ export default function SessionRail({
         lastActiveIdRef.current = id
         onSessionChanged()
         void refresh()
+        // 切换完成即收起抽屉：立刻让出消息区视野（唯一自动收起场景，非弹出）
+        setOpen(false)
       } catch (e) {
         flashNotice(typeof e === 'string' ? e : String(e))
       }
@@ -327,108 +339,17 @@ export default function SessionRail({
       try {
         await archiveSession(id)
         void refresh()
-      } catch (e) {
-        const code = typeof e === 'string' ? e : String(e)
-        // busy / 追加队列非空复用切换守卫文案（业务等待=info 蓝）；其他走归档失败兜底（error 红）
-        if (code === 'busy' || code === 'append_pending') {
-          flashNotice(code)
-        } else {
-          flashNotice('archiveFailGeneric')
-        }
+      } catch {
+        flashNotice('archiveFailGeneric')
       }
     },
-    [refresh, flashNotice, t],
+    [refresh, flashNotice],
   )
 
-  /** 整轨隐显：感应区为纯几何判定（pointer-events:none），不拦截任何点击；
-   *    window mousemove + rAF 节流做矩形包含检测，移开 10s 后 0.6s 渐隐 ── */
-  const zoneRef = useRef<HTMLDivElement>(null)
-  const rafId = useRef(0)
-  // hover 音效节流：鼠标扫过列表时避免连续爆音（120ms 内只响一次）
-  const hoverSoundAt = useRef(0)
-  const playHoverSound = useCallback(() => {
-    const now = Date.now()
-    if (now - hoverSoundAt.current < 120) return
-    hoverSoundAt.current = now
-    playUiSound('session')
-  }, [])
-  const insideRef = useRef(false)
-
-  const startReveal = useCallback(() => {
-    // 后端执行态（busy / 提炼中）不唤出：会话台只服务空闲态（2026-08-30 修正）
-    if (hardLockedRef.current) return
-    if (leaveTimer.current) {
-      clearTimeout(leaveTimer.current)
-      leaveTimer.current = null
-    }
-    if (fadeTimer.current) {
-      clearTimeout(fadeTimer.current)
-      fadeTimer.current = null
-    }
-    setRevealed(true)
-    setFading(false)
-  }, [])
-
-  const scheduleHide = useCallback(() => {
-    // 编辑标题期间绝不启动渐隐倒计时
-    if (editingRef.current) return
-    if (leaveTimer.current) return
-    leaveTimer.current = setTimeout(() => {
-      leaveTimer.current = null
-      setFading(true)
-      fadeTimer.current = setTimeout(() => {
-        fadeTimer.current = null
-        setRevealed(false)
-        setFading(false)
-      }, 600)
-    }, 10_000)
-  }, [])
-
-  const cancelHide = useCallback(() => {
-    if (leaveTimer.current) {
-      clearTimeout(leaveTimer.current)
-      leaveTimer.current = null
-    }
-    if (fadeTimer.current) {
-      clearTimeout(fadeTimer.current)
-      fadeTimer.current = null
-    }
-  }, [])
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (rafId.current) return
-      rafId.current = requestAnimationFrame(() => {
-        rafId.current = 0
-        const el = zoneRef.current
-        if (!el) return
-        const r = el.getBoundingClientRect()
-        const inside =
-          e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
-        if (inside === insideRef.current) return
-        insideRef.current = inside
-        if (inside) {
-          startReveal()
-        } else {
-          scheduleHide()
-        }
-      })
-    }
-    window.addEventListener('mousemove', onMove)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      if (rafId.current) cancelAnimationFrame(rafId.current)
-    }
-  }, [startReveal, scheduleHide])
-
-  // 卸载清理
-  useEffect(
-    () => () => {
-      if (leaveTimer.current) clearTimeout(leaveTimer.current)
-      if (fadeTimer.current) clearTimeout(fadeTimer.current)
-    },
-    [],
-  )
+  const handleNewChat = useCallback(() => {
+    setOpen(false)
+    onNewChat?.()
+  }, [onNewChat])
 
   const saveRename = useCallback(
     async (id: string) => {
@@ -445,140 +366,157 @@ export default function SessionRail({
     [draftTitle, refresh, flashNotice],
   )
 
-  // 执行中（hardLocked）滑块强制隐藏：hover 不唤出、已显示立即收起；
-  // 引导块只跟随滑块显隐（滑块出则藏、滑块隐则显），不受执行态影响
-  const shown = (revealed || fading || editingId !== null) && !hardLocked
+  // hover 音效节流：鼠标扫过列表时避免连续爆音（120ms 内只响一次）
+  const hoverSoundAt = useRef(0)
+  const playHoverSound = useCallback(() => {
+    const now = Date.now()
+    if (now - hoverSoundAt.current < 120) return
+    hoverSoundAt.current = now
+    playUiSound('session')
+  }, [])
+
+  /** 收起色块显示的当前会话 mode（无 active 时显示中性点） */
+  const activeMode = items.find(i => i.is_active)?.mode ?? ''
 
   return (
     <>
-      {/* 左缘感应区：横向自左边框至内容气泡前，纵向覆盖 10 横条显示高度；
-          pointer-events:none 纯几何判定（window mousemove），绝不拦截输入框点击 */}
-      <div ref={zoneRef} className="session-rail-hover-zone" aria-hidden />
-      {/* 引导标志块：工作台隐藏（concealed）时在左上角露出小竖条，暗示此处有内容可展开；
-          左缘贴应用边框无间距，右侧上下椭圆角（圆帽）。hover 标志块弹出标题气泡
-          「会话工作台」（复用 sr-bubble 样式，双向 hover 桥接防间隙丢失）。 */}
-      {!shown && (
-        <div className="session-rail-guide" aria-hidden>
-          <span className="session-rail-guide-bar" />
-          <span className="session-rail-guide-title">{t('sessionRail.guideTitle')}</span>
-        </div>
-      )}
-      <div
-        className={[
-          'session-rail-zone',
-          hardLocked ? 'is-locked' : '',
-          shown ? (fading ? 'fading' : 'revealed') : 'concealed',
-        ]
-          .filter(Boolean)
-          .join(' ')}
+      {/* ── 收起色块（常驻）：收起态唯一可见元素。
+          内容 = 会话图标 + 当前会话 mode 首字母（W/L/C），点击展开/收起左侧滑动栏。
+          无 hover 感应唤出、无执行完成自动弹出：开合入口只有这一枚色块的点击。 ── */}
+      <button
+        ref={chipRef}
+        type="button"
+        className="session-rail-chip"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        tabIndex={open ? -1 : undefined}
+        aria-label={t('sessionRail.title')}
+        title={t('sessionRail.title')}
       >
-        <div className="session-rail" role="navigation" aria-label={t('sessionRail.title')}>
-          {/* 顶部新建对话 = 永远完整显示的书签（默认 hover 样式），
-            内容是文字「新建」（短版 i18n newChatLabel，48px 装得下）。
-            与 Ctrl+N / TitleBar 同一逻辑源（onNewChat 由 App 注入 handleNewChat）。
-            执行中（!canSwitch）禁用：后端 guard_switch 也会拒绝，UI 双保险。 */}
-          {onNewChat && (
-            <div className="sr-new-chat">
-              <button
-                type="button"
-                className="sr-new-chat-btn"
-                onClick={onNewChat}
-                disabled={hardLocked}
-                title={t('sessionRail.newChat')}
-                aria-label={t('sessionRail.newChat')}
-              >
-                {t('sessionRail.newChatLabel')}
-              </button>
-            </div>
-          )}
-          {items.map((it, idx) => (
-            <div
-              key={it.id}
-              className={`sr-item${it.is_active ? ' active' : ''}${
-                editingId === it.id ? ' editing' : ''
-              }`}
-              onMouseEnter={() => {
-                // hover 可切换项（非当前、非编辑态、未锁定）响轻音反馈
-                if (!it.is_active && editingId !== it.id && !hardLocked) playHoverSound()
-              }}
+        <IconHistory size={14} />
+        <span className={`sr-chip-letter${activeMode ? ` mode-${activeMode}` : ''}`}>
+          {modeToLetter(activeMode)}
+        </span>
+      </button>
+
+      {/* 点击面板外收起：透明承接层，不压暗消息流 */}
+      <div
+        className={`session-rail-scrim${open ? ' is-open' : ''}`}
+        aria-hidden="true"
+        onMouseDown={closeDrawer}
+      />
+
+      {/* ── 左侧滑动栏（抽屉）：默认平移出面板左缘外，点击色块后滑出。
+          常驻挂载以保留滑动过渡；visibility 断开关闭态的 tab 焦点与命中测试。 ── */}
+      <aside
+        ref={panelRef}
+        className={`session-rail-drawer${open ? ' is-open' : ''}`}
+        role="navigation"
+        aria-label={t('sessionRail.title')}
+        aria-hidden={open ? undefined : true}
+      >
+        <div className="sr-drawer-head">
+          <span className="sr-drawer-title">{t('sessionRail.title')}</span>
+          <button
+            type="button"
+            className="sr-collapse-btn"
+            onClick={closeDrawer}
+            title={t('sessionRail.collapse')}
+            aria-label={t('sessionRail.collapse')}
+          >
+            <IconX size={13} />
+          </button>
+        </div>
+        {/* 执行中：抽屉仍可打开查看（不给「点了没反应」的错觉），条目禁用 + 顶部说明 */}
+        {hardLocked && <div className="sr-drawer-hint">{t('sessionRail.busyHint')}</div>}
+        {/* 顶部新建对话：与 Ctrl+N / TitleBar 同一逻辑源（onNewChat 由 App 注入 handleNewChat） */}
+        {onNewChat && (
+          <div className="sr-new-chat">
+            <button
+              type="button"
+              className="sr-new-chat-btn"
+              onClick={handleNewChat}
+              disabled={hardLocked}
+              title={t('sessionRail.newChat')}
             >
-              <span
-                className="sr-bar"
-                data-depth={Math.min(idx, 7)}
-                style={{ transitionDelay: `${idx * 0.02}s` }}
-                role="button"
-                aria-label={it.title || t('sessionRail.untitled')}
-                tabIndex={it.is_active || hardLocked ? -1 : 0}
-                onClick={() => {
-                  // 复用 sr-title-btn 的点击逻辑：当前会话 / 执行中禁用，
-                  // 其余走 handleSwitch 切到目标会话
-                  if (it.is_active || hardLocked) return
-                  void handleSwitch(it.id, it.is_active)
+              <IconPlus size={13} />
+              <span>{t('sessionRail.newChat')}</span>
+            </button>
+          </div>
+        )}
+        <div className="sr-list">
+          {items.map(it => {
+            const modeText =
+              it.mode === 'workflow'
+                ? t('input.mode.workflow')
+                : it.mode === 'leader'
+                  ? t('input.mode.leader')
+                  : it.mode === 'custom'
+                    ? t('input.mode.custom')
+                    : ''
+            return (
+              <div
+                key={it.id}
+                className={`sr-item${it.is_active ? ' active' : ''}${
+                  editingId === it.id ? ' editing' : ''
+                }`}
+                onMouseEnter={() => {
+                  // hover 可切换项（非当前、非编辑态、未锁定）响轻音反馈
+                  if (!it.is_active && editingId !== it.id && !hardLocked) playHoverSound()
                 }}
               >
-                <span className={`sr-bar-letter mode-${it.mode}`} aria-hidden="true">
-                  {modeToLetter(it.mode)}
-                </span>
-              </span>
-              <div className="sr-bubble">
                 {editingId === it.id ? (
-                  <>
-                    <div className="sr-head">
-                      <input
-                        className="sr-rename-input"
-                        value={draftTitle}
-                        autoFocus
-                        maxLength={60}
-                        placeholder={it.title || t('sessionRail.untitled')}
-                        onChange={e => setDraftTitle(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter' && draftTitle.trim()) void saveRename(it.id)
-                          if (e.key === 'Escape') setEditingId(null)
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="sr-edit-btn"
-                        onClick={() => void saveRename(it.id)}
-                        disabled={!draftTitle.trim()}
-                        title={t('sessionRail.save')}
-                        aria-label={t('sessionRail.save')}
-                      >
-                        <IconCheck size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        className="sr-edit-btn"
-                        onClick={() => setEditingId(null)}
-                        title={t('common.cancel')}
-                        aria-label={t('common.cancel')}
-                      >
-                        <IconX size={12} />
-                      </button>
-                    </div>
-                  </>
+                  <div className="sr-head">
+                    <input
+                      className="sr-rename-input"
+                      value={draftTitle}
+                      autoFocus
+                      maxLength={60}
+                      placeholder={it.title || t('sessionRail.untitled')}
+                      onChange={e => setDraftTitle(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && draftTitle.trim()) void saveRename(it.id)
+                        if (e.key === 'Escape') {
+                          // 只退编辑、不收起抽屉（拦下冒泡给 document 的 Esc 收起监听）
+                          e.stopPropagation()
+                          setEditingId(null)
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="sr-edit-btn"
+                      onClick={() => void saveRename(it.id)}
+                      disabled={!draftTitle.trim()}
+                      title={t('sessionRail.save')}
+                      aria-label={t('sessionRail.save')}
+                    >
+                      <IconCheck size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="sr-edit-btn"
+                      onClick={() => setEditingId(null)}
+                      title={t('common.cancel')}
+                      aria-label={t('common.cancel')}
+                    >
+                      <IconX size={12} />
+                    </button>
+                  </div>
                 ) : (
                   <>
                     <div className="sr-head">
-                      {it.mode === 'workflow' && (
-                        <span className="sr-mode-badge mode-workflow" aria-hidden="true">
-                          {t('input.mode.workflow').toUpperCase()}
-                        </span>
-                      )}
-                      {it.mode === 'leader' && (
-                        <span className="sr-mode-badge mode-leader" aria-hidden="true">
-                          {t('input.mode.leader').toUpperCase()}
-                        </span>
-                      )}
-                      {it.mode === 'custom' && (
-                        <span className="sr-mode-badge mode-custom" aria-hidden="true">
-                          {t('input.mode.custom').toUpperCase()}
+                      {modeText && (
+                        <span className={`sr-mode-badge mode-${it.mode}`} aria-hidden="true">
+                          {modeText.toUpperCase()}
                         </span>
                       )}
                       <button
                         type="button"
                         className={`sr-title-btn${it.is_active ? ' active' : ''}`}
                         disabled={it.is_active || hardLocked}
+                        aria-current={it.is_active ? 'true' : undefined}
+                        title={it.title || t('sessionRail.untitled')}
                         onClick={() => void handleSwitch(it.id, it.is_active)}
                       >
                         {it.title || t('sessionRail.untitled')}
@@ -589,10 +527,6 @@ export default function SessionRail({
                         onClick={() => {
                           setDraftTitle(it.title)
                           setEditingId(it.id)
-                          // 编辑期间冻结隐显：取消在途倒计时并强制常亮
-                          cancelHide()
-                          setFading(false)
-                          setRevealed(true)
                         }}
                         title={t('sessionRail.rename')}
                         aria-label={t('sessionRail.rename')}
@@ -612,17 +546,14 @@ export default function SessionRail({
                         </button>
                       )}
                     </div>
-                    {/* 预览并入气泡：agent 最终回复（脱敏截断），与标题「话题 ↔ 结果」
-                        互补，hover 条���时与标题一体呈现（统一整体，非独立 tooltip）。
-                        编辑态隐藏（改名输入时不被预览挤占） */}
-                    {it.preview && editingId !== it.id ? (
-                      <div className="sr-preview">{it.preview}</div>
-                    ) : null}
+                    {/* 预览：agent 最终回复（脱敏截断），与标题「话题 ↔ 结果」互补。
+                        抽屉内限 2 行（CSS line-clamp），长回复不撑高列表 */}
+                    {it.preview ? <div className="sr-preview">{it.preview}</div> : null}
                   </>
                 )}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         {notice && (
@@ -635,38 +566,39 @@ export default function SessionRail({
             <span>{notice.text}</span>
           </div>
         )}
-        {confirmArchiveId &&
-          createPortal(
-            <CompactModal
-              open
-              onClose={() => setConfirmArchiveId(null)}
-              title={t('sessionRail.archiveConfirmTitle')}
-              size="sm"
-              className="compact-modal--fit"
-              footer={
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => setConfirmArchiveId(null)}
-                  >
-                    {t('common.cancel')}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => void handleArchive(confirmArchiveId)}
-                  >
-                    {t('sessionRail.archive')}
-                  </button>
-                </>
-              }
-            >
-              <div className="sr-confirm-desc">{t('sessionRail.archiveConfirmDesc')}</div>
-            </CompactModal>,
-            document.body,
-          )}
-      </div>
+      </aside>
+
+      {confirmArchiveId &&
+        createPortal(
+          <CompactModal
+            open
+            onClose={() => setConfirmArchiveId(null)}
+            title={t('sessionRail.archiveConfirmTitle')}
+            size="sm"
+            className="compact-modal--fit"
+            footer={
+              <>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setConfirmArchiveId(null)}
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => void handleArchive(confirmArchiveId)}
+                >
+                  {t('sessionRail.archive')}
+                </button>
+              </>
+            }
+          >
+            <div className="sr-confirm-desc">{t('sessionRail.archiveConfirmDesc')}</div>
+          </CompactModal>,
+          document.body,
+        )}
     </>
   )
 }

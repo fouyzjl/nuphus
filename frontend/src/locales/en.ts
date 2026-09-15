@@ -130,11 +130,10 @@ const en: Record<string, string> = {
   'extAgents.deliver.cancelBtn': 'Cancel',
   'extAgents.deliver.deleteFail': 'Delete failed',
 
-  // 鈹€鈹€ Session Rail (session shelf) 鈹€鈹€
-  'sessionRail.title': 'Session rail',
-  'sessionRail.guideTitle': 'Session workbench',
+  // ── Session Rail (session workbench: edge chip + slide-out drawer) ──
+  'sessionRail.title': 'Session workbench',
+  'sessionRail.collapse': 'Collapse',
   'sessionRail.newChat': 'New chat',
-  'sessionRail.newChatLabel': 'New',
   'sessionRail.busyHint': 'Locked while executing ...append an instruction or wait',
   'sessionRail.rename': 'Rename session title',
   'sessionRail.save': 'Save',
