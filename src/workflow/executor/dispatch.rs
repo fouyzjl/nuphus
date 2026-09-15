@@ -164,9 +164,18 @@ impl Executor {
                 .await
             }
             Action::Wait { wait, auto } => {
+                // 与其它 action 对齐：提示语先做 {{var}} 模板替换再展示。
+                // chat（step_chat_agent）/ script / tool / mcp 都走 resolve_vars_str，
+                // 只有 wait 漏了 —— 于是提示语把占位符原样显示出来。实测 HUD 上是
+                // "等待: 已读取到 {{pending_raw}}…"：用户既看不出在等什么，也看不到
+                // 该步骤本想汇报的内容（如待学课程清单）。
+                //
+                // 注：`auto` 子步骤与取消/恢复语义均不受影响；判据仍是替换后的文案
+                // 是否为空，与其它 action 的"先 resolve 再使用"保持一致。
+                let resolved_wait = super::variables::resolve_vars_str(wait, variables);
                 self.execute_wait_step(
                     step,
-                    wait,
+                    &resolved_wait,
                     auto,
                     depth,
                     store,

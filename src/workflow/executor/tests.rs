@@ -1105,3 +1105,75 @@ async fn test_failed_step_emits_error_and_step_run_completed_error() {
         "失败步骤应发 StepRunCompleted{{Error}}（前端据此标红叉，而非误收敛为绿色 completed）"
     );
 }
+
+/// wait 步骤的提示语必须做 `{{var}}` 模板替换（与 chat / script / tool / mcp 对齐）。
+///
+/// 回归背景：实测 HUD 上显示的是字面的 "等待: 已读取到 {{pending_raw}}…" ——
+/// 用户既看不出在等什么，也看不到该步骤本该汇报的内容（待学课程清单）。
+/// 根因：`Action::Wait` 把 wait 文案原样传给执行器，唯独它没走 resolve_vars_str，
+/// 而同一条提示语里的变量在上游步骤已经 `capture` 成功。
+#[tokio::test]
+async fn wait_prompt_is_variable_substituted() {
+    async fn pending_tool_exec(
+        _tool: String,
+        _params: serde_json::Value,
+    ) -> StdResult<String, String> {
+        Ok("5 门课未完成".to_string())
+    }
+
+    let tmp = std::env::temp_dir().join("nuphus_test_wait_vars");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let mut rx = events.subscribe();
+    let executor = Executor::new();
+
+    // 上游：工具步骤把输出 capture 成变量 pending_raw（非 JSON → 原样存字符串）
+    let mut capture_step = make_tool_step("read_pending", "mock_echo", serde_json::json!({}));
+    capture_step.capture = Some("pending_raw".to_string());
+
+    // 下游：wait 步骤的提示语引用该变量
+    let wait_step = Step {
+        id: "report_plan".to_string(),
+        name: "汇报学习计划".to_string(),
+        action: Action::Wait {
+            wait: "已读取到 {{pending_raw}}。点击继续开始。".to_string(),
+            auto: vec![],
+        },
+        ..Default::default()
+    };
+
+    let mut wf = Workflow::new("wait_vars_test");
+    wf.steps = vec![capture_step, wait_step];
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let tool_exec = |tool: String, params: serde_json::Value| pending_tool_exec(tool, params);
+    // wait 步骤会一直等"继续"：StepRunPaused 在进入等待轮询**之前**就已发出，
+    // 所以用超时掐掉即可断言事件，不需要真的 resume（否则测试要挂到 30 分钟超时）。
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(900),
+        executor.execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        ),
+    )
+    .await;
+
+    let mut reasons: Vec<String> = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let WorkflowEvent::StepRunPaused { reason, .. } = ev {
+            reasons.push(reason);
+        }
+    }
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+
+    assert!(!reasons.is_empty(), "wait 步骤应发出 StepRunPaused");
+    assert!(
+        reasons.iter().any(|r| r.contains("5 门课未完成")),
+        "wait 提示语里的 {{{{pending_raw}}}} 应被替换为变量值，实际: {reasons:?}"
+    );
+    assert!(
+        !reasons.iter().any(|r| r.contains("{{")),
+        "wait 提示语不应残留模板占位符，实际: {reasons:?}"
+    );
+}
