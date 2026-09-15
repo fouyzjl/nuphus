@@ -75,17 +75,49 @@ pub async fn execute_session_refine<R: tauri::Runtime>(
     cancel_flag.store(false, Ordering::SeqCst);
     state.pause_flag.store(false, Ordering::SeqCst);
 
-    let is_workflow = {
+    // ── 模式判定：以 current_mode 为准（与 session.rs::chat_history 同一权威源）──
+    // 旧写法 `guard.workflow_agent.is_some()` 是「实例存在性推断模式」：mode.rs 切到
+    // Leader 时**保留** workflow_agent（session 不丢失，见 mode.rs:16 注释），因此只要
+    // 进过 workflow 模式，该槽永久为 Some → is_some() 恒真 → 切回 leader/custom 后
+    // refine 仍去提炼 workflow 会话（用户报告：「refine 内容是最早时的 mode Agent 内容，
+    // 不是当前 mode Agent 的内容」）。
+    // custom 模式走 leader 主循环（session 存于 leader_agent）→ 按 leader 处理，
+    // 与 session.rs:269-276 的归一化语义一致。
+    // 锁序：先取 runtime 锁、后读 current_mode（current_mode 是独立 RwLock；mode.rs 写入侧
+    // 先 drop(guard) 再写，无反向嵌套，故本顺序无死锁环），与 session.rs::chat_history 相同。
+    let (is_workflow, agent_ready) = {
         let guard = state.runtime.lock().map_err(|e| e.to_string())?;
-        guard.workflow_agent.is_some()
+        let current_mode = state
+            .current_mode
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "leader".to_string());
+        let is_workflow = current_mode == "workflow";
+        // 目标模式的 agent 可用性检查（「实例可用性」，与上面的模式判定严格分离）
+        let agent_ready = if is_workflow {
+            guard.workflow_agent.is_some()
+        } else {
+            guard.leader_agent.is_some()
+        };
+        tracing::info!(
+            "[REFINE] mode={} is_workflow={} agent_ready={}",
+            current_mode,
+            is_workflow,
+            agent_ready
+        );
+        (is_workflow, agent_ready)
     };
 
-    if !is_workflow {
-        // Verify Leader agent exists before emitting RefineExecuting
-        let guard = state.runtime.lock().map_err(|e| e.to_string())?;
-        if guard.leader_agent.is_none() {
-            return Err("No active agent — refine requires an active session.".to_string());
-        }
+    // Verify the *target mode's* agent exists before emitting RefineExecuting：
+    // 缺失时前置失败（不广播 RefineExecuting/RefineFailed），避免双端提炼 UI 进入 spinner
+    // 后等不到结束事件；也避免旧行为下「mode=workflow 但 workflow_agent 未懒初始化」
+    // 时静默回落到 leader 会话提炼（错误会话）。
+    if !agent_ready {
+        return Err(if is_workflow {
+            "No active workflow agent — refine requires an active session.".to_string()
+        } else {
+            "No active agent — refine requires an active session.".to_string()
+        });
     }
 
     emitter.emit(NuphusEvent::RefineExecuting);
