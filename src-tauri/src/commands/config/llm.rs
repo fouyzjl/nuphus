@@ -7,9 +7,9 @@
 use super::toml_ops::{
     clear_provider_api_key_in_config_toml, clear_provider_models_in_config_toml, get_config_path,
     list_configured_providers, read_model_context_window, read_provider_api_key_from_config_toml,
-    read_provider_reasoning_effort_from_config_toml, update_config_toml,
-    update_model_context_window, update_model_reasoning_efforts, update_model_supports_vision,
-    update_reasoning_effort, upsert_provider_models,
+    read_provider_base_url_from_config_toml, read_provider_reasoning_effort_from_config_toml,
+    update_config_toml, update_model_context_window, update_model_reasoning_efforts,
+    update_model_supports_vision, update_reasoning_effort, upsert_provider_models,
 };
 use crate::emitter::CompoundEmitter;
 use crate::models::aggregator as or_agg;
@@ -641,12 +641,12 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
     // Resolve base_url from provider metadata
     let registry = ProviderRegistry::builtin();
     let pmeta = registry.get(&provider);
-    let resolved_base_url = base_url.filter(|s| !s.is_empty()).unwrap_or_else(|| {
-        pmeta
-            .as_ref()
-            .map(|p| p.default_base_url().to_string())
-            .unwrap_or_default()
-    });
+    let resolved_base_url = resolve_effective_base_url(
+        base_url.as_deref(),
+        &provider,
+        pmeta.as_ref().map(|p| p.default_base_url()),
+    )
+    .ok_or_else(|| BASE_URL_UNCONFIGURED_MSG.to_string())?;
 
     let resolved_model = model.clone();
     let resolved_provider = provider.clone();
@@ -814,12 +814,12 @@ pub async fn configure_llm(
     let resolved_model = model
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default_model.to_string());
-    let resolved_base_url = base_url.filter(|s| !s.is_empty()).unwrap_or_else(|| {
-        provider
-            .as_ref()
-            .map(|p| p.default_base_url().to_string())
-            .unwrap_or_default()
-    });
+    let resolved_base_url = resolve_effective_base_url(
+        base_url.as_deref(),
+        &resolved_provider,
+        provider.as_ref().map(|p| p.default_base_url()),
+    )
+    .ok_or_else(|| BASE_URL_UNCONFIGURED_MSG.to_string())?;
 
     tracing::info!(
         "configure_llm: provider={}, model={}, base_url={}",
@@ -1524,14 +1524,12 @@ pub async fn test_llm_connection(
     // 1. Get provider metadata and defaults from ProviderRegistry
     let registry = ProviderRegistry::builtin();
     let provider_meta = registry.get(&provider);
-    let resolved_base_url = if base_url.is_empty() {
-        provider_meta
-            .as_ref()
-            .map(|p| p.default_base_url().to_string())
-            .unwrap_or_default()
-    } else {
-        base_url
-    };
+    let resolved_base_url = resolve_effective_base_url(
+        Some(base_url.as_str()),
+        &provider,
+        provider_meta.as_ref().map(|p| p.default_base_url()),
+    )
+    .ok_or_else(|| BASE_URL_UNCONFIGURED_MSG.to_string())?;
     let auth_header = provider_meta
         .as_ref()
         .map(|p| p.auth_header().to_string())
@@ -1644,6 +1642,37 @@ pub struct ProviderModelBrief {
     pub context_window: Option<u64>,
 }
 
+/// 自定义端点内置默认地址是文档示例：解析结果命中即视为「尚未配置」。
+fn is_placeholder_base_url(url: &str) -> bool {
+    url.trim()
+        .eq_ignore_ascii_case(nuphus::config::providers::custom::PLACEHOLDER_BASE_URL)
+}
+
+/// 解析服务商**实际可用**的 base_url，优先级：显式参数 → config.toml 已存地址 → 内置默认。
+///
+/// 命中占位示例地址（自定义端点未填写真实地址）→ `None`，由调用方给出可读错误：
+/// 既避免把请求发往示例域名，也避免把示例地址写进配置覆盖用户已填地址。
+fn resolve_effective_base_url(
+    explicit: Option<&str>,
+    provider: &str,
+    default_base_url: Option<&str>,
+) -> Option<String> {
+    let chosen = match explicit.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => read_provider_base_url_from_config_toml(provider).or_else(|| {
+            default_base_url
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })?,
+    };
+    (!is_placeholder_base_url(&chosen)).then_some(chosen)
+}
+
+/// 占位地址被判定为「未配置」时的统一可读错误。
+const BASE_URL_UNCONFIGURED_MSG: &str =
+    "尚未配置接口地址：请在「接口地址」填入自定义服务商/中转站地址后重试";
+
 /// 从服务商 /v1/models 拉取最新模型列表（list_provider_models 与 refresh_provider_models 共用核心）。
 async fn fetch_provider_models(
     api_key: &str,
@@ -1668,9 +1697,9 @@ async fn fetch_provider_models(
         return Err("API Key 不能为空".to_string());
     }
 
-    let resolved_base_url = base_url
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| pmeta.default_base_url());
+    let resolved_base_url =
+        resolve_effective_base_url(base_url, provider, Some(pmeta.default_base_url()))
+            .ok_or_else(|| BASE_URL_UNCONFIGURED_MSG.to_string())?;
 
     let url = format!("{}/models", resolved_base_url.trim_end_matches('/'));
     // 未声明鉴权方案（auth_header 为空串）的 Provider，用户显式填了 key 就按
@@ -1849,6 +1878,14 @@ pub async fn refresh_provider_models(
     }
 
     Ok(models)
+}
+
+/// 读取某服务商已保存的接口地址（界面回填用）：未配置返回 null。
+/// 前端在切换服务商时据此还原「接口地址」输入框——否则切回页面即空，
+/// 用户会误以为配置丢失，检测/刷新也会拿着空值去回落内置默认地址。
+#[tauri::command]
+pub fn get_provider_base_url(provider: String) -> Option<String> {
+    read_provider_base_url_from_config_toml(&provider)
 }
 
 /// Supported Provider info

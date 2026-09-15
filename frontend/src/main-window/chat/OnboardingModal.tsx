@@ -51,7 +51,7 @@ export function OnboardingModal({ onComplete, onSkip }: OnboardingModalProps) {
     setLoading(true)
     setError('')
     try {
-      await configureLlm(apiKey.trim(), model.trim(), selected.id, selected.base_url)
+      await configureLlm(apiKey.trim(), model.trim(), selected.id)
       localStorage.setItem('nuphus_onboarding_done', 'true')
       // 同步当前 provider 的 model 到 localStorage，供快捷切换弹窗读取
       try {

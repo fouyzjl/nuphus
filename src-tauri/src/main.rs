@@ -202,6 +202,7 @@ fn main() {
             commands::test_llm_connection,
             commands::list_provider_models,
             commands::refresh_provider_models,
+            commands::get_provider_base_url,
             commands::add_provider_model,
             commands::clear_provider_models,
             commands::get_supported_providers,

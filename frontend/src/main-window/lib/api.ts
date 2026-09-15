@@ -620,6 +620,11 @@ export function refreshProviderModels(provider: string, baseUrl?: string) {
   return invoke<ProviderModelBrief[]>('refresh_provider_models', { provider, baseUrl })
 }
 
+/** 读取某服务商已保存的接口地址（界面回填用）；未配置返回 null */
+export function getProviderBaseUrl(provider: string) {
+  return invoke<string | null>('get_provider_base_url', { provider })
+}
+
 /** 手动添加单模型到服务商配置（config.toml models 列表）——灰度/临时模型（/v1/models 未返回）使用 */
 export function addProviderModel(provider: string, modelId: string) {
   return invoke<void>('add_provider_model', { provider, modelId })

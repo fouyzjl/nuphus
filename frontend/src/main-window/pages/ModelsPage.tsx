@@ -11,6 +11,7 @@ import {
   listModels,
   listProviderModels,
   refreshProviderModels,
+  getProviderBaseUrl,
   addProviderModel,
   clearProviderModels,
   getAgentModels,
@@ -561,6 +562,17 @@ export function ModelsPage({
     setDetectedModels(loadDetectedModels(provider))
     setBaseUrl('')
     setLoadedBaseUrl('')
+    // 回填该服务商已保存的接口地址：留空会让用户以为配置丢了，检测/刷新也会拿着
+    // 空值去回落内置默认（自定义端点的内置默认只是文档占位示例）。
+    getProviderBaseUrl(provider)
+      .then(url => {
+        if (providerRef.current !== provider) return
+        const saved = (url || '').trim()
+        if (!saved) return
+        setBaseUrl(saved)
+        setLoadedBaseUrl(saved)
+      })
+      .catch(() => {})
     setFilterInput('')
     setCtxOverrides({})
     setEditingCtxModel(null)
@@ -591,8 +603,9 @@ export function ModelsPage({
     if (autoSyncedRef.current.has(provider)) return
     autoSyncedRef.current.add(provider)
     const target = provider
-    const p = providers.find(x => x.id === target)
-    refreshProviderModels(target, p?.base_url || undefined)
+    // 不传内置默认地址：自建/中转端点须用 config.toml 已存真实地址，内置默认
+    // （自定义端点为文档占位示例）由后端在缺省时自行回落。
+    refreshProviderModels(target)
       .then(models => {
         if (providerRef.current !== target || !Array.isArray(models)) return
         setDetectedModels(models)
@@ -676,9 +689,9 @@ export function ModelsPage({
     setDetectError(null)
     setDetectedModels([])
     try {
-      const p = providers.find(x => x.id === provider)
-      const resolvedBaseUrl = baseUrl || p?.base_url || ''
-      const models = await listProviderModels(key, provider, resolvedBaseUrl || undefined)
+      // 只下发用户填写的地址；空值交给后端按「显式参数 → 已存配置 → 内置默认」解析，
+      // 避免内置默认（自定义端点为文档占位示例）被当作有效地址。
+      const models = await listProviderModels(key, provider, baseUrl.trim() || undefined)
       setDetectedModels(models ?? [])
       saveDetectedModels(provider, models ?? [])
     } catch (e: any) {
@@ -694,9 +707,8 @@ export function ModelsPage({
     setRefreshing(true)
     setRefreshError(null)
     try {
-      const p = providers.find(x => x.id === provider)
-      const resolvedBaseUrl = baseUrl || p?.base_url || ''
-      const models = await refreshProviderModels(provider, resolvedBaseUrl || undefined)
+      // 同上：不下发内置默认地址，空值交给后端解析已存配置
+      const models = await refreshProviderModels(provider, baseUrl.trim() || undefined)
       setDetectedModels(models ?? [])
       saveDetectedModels(provider, models ?? [])
       listModels()
@@ -770,15 +782,19 @@ export function ModelsPage({
     setClearingKey(true)
     try {
       await clearProviderApiKey(provider)
-      const cfg = await getCurrentConfig()
-      if (cfg) {
-        setApiKey('')
-        setBaseUrl(cfg.base_url || '')
-        setLoadedBaseUrl(cfg.base_url || '')
-        if (cfg.configured_providers) {
-          setConfiguredProviders(cfg.configured_providers)
-          setHasKey(cfg.configured_providers.includes(provider))
-        }
+      const [cfg, savedUrl] = await Promise.all([
+        getCurrentConfig().catch(() => null),
+        getProviderBaseUrl(provider).catch(() => null),
+      ])
+      const savedBase = (savedUrl || '').trim()
+      if (savedBase) {
+        setBaseUrl(savedBase)
+        setLoadedBaseUrl(savedBase)
+      }
+      setApiKey('')
+      if (cfg?.configured_providers) {
+        setConfiguredProviders(cfg.configured_providers)
+        setHasKey(cfg.configured_providers.includes(provider))
       }
       setFeedback({ ok: true, msg: TXT.clearKeySuccess })
     } catch (e: any) {
@@ -811,16 +827,23 @@ export function ModelsPage({
     setSavingKey(true)
     setDetectError(null)
     try {
-      const p = providers.find(x => x.id === provider)
-      await configureLlm(key, target, provider, baseUrl || p?.base_url || '')
-      const cfg = await getCurrentConfig()
-      if (cfg) {
-        setBaseUrl(cfg.base_url || '')
-        setLoadedBaseUrl(cfg.base_url || '')
-        if (cfg.configured_providers) {
-          setConfiguredProviders(cfg.configured_providers)
-          setHasKey(cfg.configured_providers.includes(provider))
-        }
+      // 只落盘用户填写的地址；空值由后端解析已存配置/内置默认，
+      // 避免把自定义端点的文档占位地址写进配置覆盖真实地址。
+      await configureLlm(key, target, provider, baseUrl.trim() || undefined)
+      // 回填「该服务商」的已存地址（cfg.base_url 是当前生效 provider 的地址，
+      // 在保存其它 provider 时会把无关地址显示到输入框）。
+      const [cfg, savedUrl] = await Promise.all([
+        getCurrentConfig().catch(() => null),
+        getProviderBaseUrl(provider).catch(() => null),
+      ])
+      const savedBase = (savedUrl || '').trim()
+      if (savedBase) {
+        setBaseUrl(savedBase)
+        setLoadedBaseUrl(savedBase)
+      }
+      if (cfg?.configured_providers) {
+        setConfiguredProviders(cfg.configured_providers)
+        setHasKey(cfg.configured_providers.includes(provider))
       }
       setApiKey('')
       setFeedback({ ok: true, msg: TXT.saveKeySuccess(target) })
@@ -856,7 +879,8 @@ export function ModelsPage({
     }
     const p = providers.find(x => x.id === provider)
     if (p) {
-      const resolvedBaseUrl = baseUrl || p.base_url
+      // 只下发用户填写的地址；内置默认（自定义端点为文档占位示例）不可当作覆盖
+      const resolvedBaseUrl = baseUrl.trim() || undefined
       const addCtxArg =
         isLocal &&
         localCtxWindow != null &&
@@ -1010,7 +1034,8 @@ export function ModelsPage({
       return
     }
     setFeedback(null)
-    const resolvedBaseUrl = baseUrl || p.base_url
+    // 不下发内置默认地址（自定义端点为文档占位示例），空值交给后端解析已存配置
+    const resolvedBaseUrl = baseUrl.trim() || undefined
     const ctxArg =
       isLocal && localCtxWindow != null && !hasExplicitCtx(name) ? localCtxWindow : undefined
     try {
@@ -1422,7 +1447,9 @@ export function ModelsPage({
                                     if (!p) return
                                     try {
                                       const effectiveKey = apiKey.trim()
-                                      const resolvedBaseUrl = baseUrl || p.base_url
+                                      // 不下发内置默认地址：自定义端点为文档占位示例，
+                                      // 空值交给后端解析已存配置/内置默认。
+                                      const resolvedBaseUrl = baseUrl.trim() || undefined
                                       if (effectiveKey) {
                                         await configureLlm(
                                           effectiveKey,

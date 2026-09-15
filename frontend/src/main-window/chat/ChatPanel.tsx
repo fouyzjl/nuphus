@@ -704,16 +704,15 @@ export function ChatPanel({
       setModelSwitchError(null)
       let switched = false
       try {
-        const prov = allProviders.find(p => p.id === cfg.provider)
-        const resolvedUrl = prov?.base_url || ''
-        // provider-driven: switch_model reads key from config.toml, no key param
-        // 按当前 mode 写入对应 agent 模型配置（Leader/Workflow/Custom 联动）
+        // 不下发内置默认地址：它对自定义/中转端点只是文档占位示例，会被后端当作
+        // 「显式地址」顶掉 config.toml 里用户填写的真实地址。空值交给后端解析
+        // （显式参数 → 已存配置 → 内置默认）。
         // context_window 兜底：从 list_models 磁盘元数据查该 (provider, model) 行，
         // 缺失时后端保持原值；显式传入避免切换后 runtime 窗口丢失。
         const ctxWin = allModels.find(
           m => m.id === cfg.model && m.provider === cfg.provider,
         )?.context_window
-        await switchModel(cfg.model, cfg.provider, resolvedUrl, ctxWin, mode)
+        await switchModel(cfg.model, cfg.provider, '', ctxWin, mode)
         switched = true
         playUiSound('switch')
         const limit = await getContextLimit()

@@ -723,6 +723,34 @@ pub fn read_provider_api_key_from_config_toml(provider_name: &str) -> Option<Str
     None
 }
 
+/// Read a provider's base_url from config.toml（用户在界面填写的接口地址）。
+///
+/// 空串/字段缺失 → `None`（调用方自行回落内置默认）。
+/// 同一 provider 存在多段时取第一段带非空地址的条目，与 key 读取口径一致。
+pub fn read_provider_base_url_from_config_toml(provider_name: &str) -> Option<String> {
+    let config_path = get_config_path()?;
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let doc: toml::Value = content.parse().ok()?;
+    let providers = doc.get("providers")?.as_array()?;
+    for provider in providers {
+        let Some(name) = provider.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        if name != provider_name {
+            continue;
+        }
+        let url = provider
+            .get("base_url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .trim();
+        if !url.is_empty() {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
 /// Read a provider's reasoning-effort value from config.toml
 /// (`[[providers]] reasoning_effort`, e.g. `"low" | "high" | "max"`).
 /// Returns `None` when absent or empty — transport default applies.

@@ -5,6 +5,12 @@ use std::sync::Arc;
 
 pub struct CustomProvider;
 
+/// 自定义端点的内置默认地址只是**文档示例**：用户必须自己填写真实地址。
+/// 任何「默认值回落」路径命中它都应视为「尚未配置」——否则请求会打向示例域名
+/// （报错表现为 `error sending request for url (https://your-custom-api.com/v1/models)`），
+/// 或被写进配置覆盖用户已填的真实地址。
+pub const PLACEHOLDER_BASE_URL: &str = "https://your-custom-api.com/v1";
+
 impl Provider for CustomProvider {
     fn id(&self) -> &'static str {
         "custom"
@@ -13,7 +19,7 @@ impl Provider for CustomProvider {
         "Custom（自定义/中转站）"
     }
     fn default_base_url(&self) -> &'static str {
-        "https://your-custom-api.com/v1"
+        PLACEHOLDER_BASE_URL
     }
     fn auth_header(&self) -> &'static str {
         "authorization"
