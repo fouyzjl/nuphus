@@ -396,18 +396,6 @@
   color: var(--fg-2);
   font-weight: 500;
 }
-/* 解码速度：ctx 模块内的次级读数（同一模型运行态），不另开状态栏胶囊。
-   色相通道留给 ctx 用量的红/黄/绿状态，这里取中性 --fg-3；
-   颜色一律走 token——三套主题（:root / light / tech）各有色板。 */
-.input-bar-ctx-speed {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  font-weight: 500;
-  color: var(--fg-3);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-  line-height: 1;
-}
 .input-bar-ctx-label {
   font-size: 10px;
   color: var(--spark-tertiary);

@@ -1313,24 +1313,7 @@ export function ChatInputBar({
                   {ctxLimit > 0 && <span className="input-bar-ctx-sep">/</span>}
                   {ctxLimit > 0 && <span className="input-bar-ctx-cap">{fmt(ctxLimit)}</span>}
                 </span>
-                {/* 解码速度：ctx 模块内的次级读数（同属模型运行态），不另开状态栏胶囊 */}
-                {tpsDisplay && (
-                  <>
-                    <span className="input-bar-ctx-sep" aria-hidden="true">
-                      ·
-                    </span>
-                    <span
-                      className="input-bar-ctx-speed"
-                      title={
-                        ttftDisplay
-                          ? `${t('status.speedTooltip', tpsDisplay)} · ${t('status.ttftTooltip', ttftDisplay)}`
-                          : t('status.speedTooltip', tpsDisplay)
-                      }
-                    >
-                      {tpsDisplay} tok/s
-                    </span>
-                  </>
-                )}
+                {/* 解码速度/首 token 延迟不占常驻位：明细在下方 ctx 弹窗（ttft / speed 两行） */}
                 {ctxHover && (
                   <span className="input-bar-ctx-detail">
                     {/* 七行完整：StatusBar 已显示 cache% / ctx%，弹窗补 tok 数值 + cap 容量 +
