@@ -7,6 +7,7 @@ import {
   IconWorkflow,
   IconSparkles,
   IconWrench,
+  IconFolder,
 } from '../../ui/Icons'
 import { IconButton } from '../../ui/Button'
 import { playUiSound, playPopupSound } from '../../ui/sound'
@@ -734,6 +735,10 @@ export function ChatInputBar({
       : null
   const ttftDisplay =
     ttftMs && Number.isFinite(ttftMs) && ttftMs > 0 ? fmtDur(Math.round(ttftMs)) : null
+  // 项目目录书签名：取路径末段（兼容 Windows 反斜杠与结尾分隔符），未设置回退空串
+  const projectDirName = projectDir
+    ? projectDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || projectDir
+    : ''
   const moodColor = MOOD_COLORS[mood || 'idle'] || MOOD_COLORS.idle
   function fmt(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -887,7 +892,19 @@ export function ChatInputBar({
         </div>
         {/* ── 右下角操作组：+ 工具 / 语音 / 发送 固定在整个输入框右下角 ── */}
         <div className="input-actions">
-          {/* ── 工具入口「+」：附件/图片/项目目录合并弹窗 ── */}
+          {/* ── 项目目录（自「+」菜单移出）：文件夹图标 + 当前书签目录名，点击进入目录管理 ── */}
+          <button
+            type="button"
+            className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
+            title={projectDir || t('input.projectDir')}
+            onClick={onOpenProjectDir}
+          >
+            <IconFolder size={14} />
+            <span className="input-project-chip-name">
+              {projectDirName || t('input.projectDir')}
+            </span>
+          </button>
+          {/* ── 工具入口「+」：附件/图片合并弹窗 ── */}
           <div className="input-tool-plus-wrap" ref={toolMenuRef}>
             <IconButton
               variant="raw"
@@ -977,31 +994,7 @@ export function ChatInputBar({
                   <span className="input-tool-menu-label">{t('input.image')}</span>
                 </button>
                 <div className="input-tool-menu-divider" />
-                {/* ── 下组：项目与记忆 ── */}
-                <button
-                  type="button"
-                  className="input-tool-menu-item"
-                  role="menuitem"
-                  disabled={isProcessing && !pauseState}
-                  onClick={() => {
-                    setToolMenuOpen(false)
-                    onOpenProjectDir()
-                  }}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M3 7a2 2 0 0 1 2-2h4l2.5 2h7.5a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-                  </svg>
-                  <span className="input-tool-menu-label">{t('input.projectDir')}</span>
-                </button>
+                {/* ── 下组：记忆与原则（项目目录已移出 + 菜单，常驻操作组）── */}
                 <button
                   type="button"
                   className="input-tool-menu-item"
