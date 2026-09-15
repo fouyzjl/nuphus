@@ -547,33 +547,41 @@ export function HudOverlay() {
     return () => clearTimeout(timer)
   }, [state.phase, scheduleAutoHide])
 
+  // 三个控制命令在后端都可能失败——例如 hud_stop 在取不到活动工作流时返回
+  // "No active workflow"。旧实现一律 `catch { /* ignore */ }`，用户点了**毫无反馈**
+  // （"点了没反应"的直接来源）。改为把原因显示在 HUD 上（error 相位）。
+  const surfaceControlError = useCallback((action: string, e: unknown) => {
+    const msg = typeof e === 'string' ? e : ((e as { message?: string })?.message ?? String(e))
+    setState(s => ({ ...s, text: `${action}失败：${msg}`, phase: 'error' }))
+  }, [])
+
   const handlePause = useCallback(async () => {
     try {
       await invoke('hud_pause')
       setState(s => ({ ...s, paused: true }))
-    } catch {
-      /* ignore */
+    } catch (e) {
+      surfaceControlError('暂停', e)
     }
-  }, [])
+  }, [surfaceControlError])
 
   const handleResume = useCallback(async () => {
     try {
       await invoke('hud_resume')
       setState(s => ({ ...s, paused: false }))
-    } catch {
-      /* ignore */
+    } catch (e) {
+      surfaceControlError('继续', e)
     }
-  }, [])
+  }, [surfaceControlError])
 
   // HUD 终止 = 终止 workflow_run：直接终止，无确认（与桌面主执行终止弹窗不同，行为即设计）
   const handleStop = useCallback(async () => {
     try {
       await invoke('hud_stop')
       setState(s => ({ ...s, phase: 'done' }))
-    } catch {
-      /* ignore */
+    } catch (e) {
+      surfaceControlError('终止', e)
     }
-  }, [])
+  }, [surfaceControlError])
 
   // ── Derived state (hooks always called at top — no conditional returns before hooks) ──
   const isRunning = state.phase === 'running' || state.phase === 'workflow'
@@ -596,6 +604,12 @@ export function HudOverlay() {
   return (
     <div
       className="hud-root"
+      /* 整条可拖动：Tauri 的 drag.js 对 deep 会向上遍历 composedPath，
+         只有 <button> 这类可点击元素会阻断（正好让暂停/终止/关闭照常点）。
+         窗口是 decorations(false)，没有标题栏，不加这个就完全拖不动。
+         双击触发 internal_toggle_maximize，但被 is_resizable() 挡住（HUD 是
+         resizable(false)），所以双击无副作用。 */
+      data-tauri-drag-region="deep"
       style={
         {
           '--hud-accent': colors.accent,
