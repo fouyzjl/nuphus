@@ -18,6 +18,24 @@ use std::time::Duration;
 const FIRST_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// 整体请求超时（reqwest client 的 total timeout，覆盖到响应体读完为止）。
+///
+/// 本地端点（本机 / 局域网推理服务）走**下限**语义：
+/// `max(配置的 timeout_secs, LOCAL_TIMEOUT_FLOOR_SECS)`（下限 900s）——本地 prefill
+/// 由硬件决定，云端那套 300s 会把长上下文请求掐死；配置配得更高时以配置为准。
+/// 云端端点原样返回配置值。
+///
+/// 调用点：`send_chat_request`（必须读完整响应体的路径）。**流式路径刻意不加总超时**——
+/// reqwest 的 `.timeout()` 是「开始连接 → 响应体读完」的总时长，会误杀合法的长流式
+/// 回答（见 `send_chat_stream` 内注释），那里改由首包 / 块间两个「无数据」界限兜底。
+fn request_timeout(config: &ChatCompletionsConfig) -> Duration {
+    Duration::from_secs(crate::config::provider::effective_timeout_secs(
+        &config.base_url,
+        config.provider_kind,
+        config.timeout_secs,
+    ))
+}
+
 /// 流式请求的最大尝试次数（含首次）。
 /// 提示文案「（第 n/N 次）」与该值同源，改这里两处一起生效。
 const MAX_STREAM_ATTEMPTS: usize = 4;
@@ -67,8 +85,19 @@ impl ChatCompletionsTransport {
     }
 
     /// 首包阈值（请求发出 → 收到响应头）
+    ///
+    /// 本地端点例外：prefill 由本地硬件决定（实测 20 万 token 上下文要一两分钟），
+    /// 拿 60s 量会误杀长上下文请求 → 直接取该端点的整体请求超时（下限 900s）。
+    /// 云端仍是「60s 无响应即判定上游挂掉」。判据见 `provider::is_local_endpoint`。
     fn first_chunk_timeout(&self) -> Duration {
-        FIRST_CHUNK_TIMEOUT
+        if crate::config::provider::is_local_endpoint(
+            &self.config.base_url,
+            self.config.provider_kind,
+        ) {
+            request_timeout(&self.config)
+        } else {
+            FIRST_CHUNK_TIMEOUT
+        }
     }
 
     /// idle 阈值（已开流 → 下一个 chunk）
@@ -133,7 +162,7 @@ impl ChatCompletionsTransport {
 
             let mut client_builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(self.config.timeout_secs))
+                .timeout(request_timeout(&self.config))
                 .pool_max_idle_per_host(0);
 
             // 先直连，连不上再 fallback 到代理

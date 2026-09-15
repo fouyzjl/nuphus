@@ -820,7 +820,11 @@ export function wfStop(token: string, workflowId: string): Promise<void> {
   return postWorkflowControl(token, './workflow-stop', workflowId)
 }
 /** 会话提炼（refine）：手机端触发（对齐桌面 execute_session_refine）。
- *  显式 100s 超时 > 后端 Leader 90s 硬超时——默认 20s 会在提炼正常进行中误杀请求。 */
+ *  客户端超时必须**宽于后端的最长预算**，否则会在后端还在正常跑时误杀请求（默认 20s 就会）。
+ *  后端：云端 Leader 90s / Workflow 60s；**本地端点**（本机/局域网推理服务）走
+ *  `max(provider.timeout_secs, 900) + 60s` 余量 ≈ 最长 960s——实测本地 20 万 token
+ *  上下文提炼约需 5.5 分钟（prefill≈2000 tok/s、decode≈15 tok/s）。
+ *  故这里给 1200s：仅作兜底，权威判据始终在后端。 */
 export async function triggerRefine(token: string): Promise<void> {
   const res = await checkAuth(
     await fetchWithTimeout(
@@ -829,7 +833,7 @@ export async function triggerRefine(token: string): Promise<void> {
         method: 'POST',
         headers: { 'X-Mobile-Token': token, ...tunnelDeviceHeaders() },
       },
-      100_000,
+      1_200_000,
     ),
   )
   if (!res.ok) {

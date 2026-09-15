@@ -772,6 +772,32 @@ pub fn read_provider_reasoning_effort_from_config_toml(provider_name: &str) -> O
     None
 }
 
+/// Read a provider's request timeout from config.toml (`[[providers]] timeout_secs`).
+///
+/// 本地端点（本机/局域网推理服务）的实际耗时由本地硬件决定，云端那套 60/90/300s
+/// 会把长上下文的提炼掐死。调用方据此实现"下限语义"：本地取
+/// `max(该值, LOCAL_TIMEOUT_FLOOR_SECS)`，配置配得更高时以配置为准。
+/// 返回 `None` 表示该 provider 没配（走 `ProviderConfig::default_timeout` = 300）。
+pub fn read_provider_timeout_secs_from_config_toml(provider_name: &str) -> Option<u64> {
+    let config_path = get_config_path()?;
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let doc: toml::Value = content.parse().ok()?;
+    let providers = doc.get("providers")?.as_array()?;
+    for provider in providers {
+        let name = provider.get("name")?.as_str()?;
+        if name == provider_name {
+            return provider
+                .get("timeout_secs")
+                .and_then(|t| t.as_integer())
+                .and_then(|t| {
+                    // 0 视为"未配置"：0 秒超时会立刻失败，不是有效意图
+                    u64::try_from(t).ok().filter(|v| *v > 0)
+                });
+        }
+    }
+    None
+}
+
 /// Collect all provider names that have non-empty API keys in config.toml.
 pub fn list_configured_providers() -> Vec<String> {
     let config_path = match get_config_path() {
