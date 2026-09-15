@@ -23,7 +23,6 @@ import {
   IconBrowser,
   IconSparkles,
   IconBot,
-  IconFolder,
   IconBrain,
   IconWrench,
   IconHistory,
@@ -67,9 +66,6 @@ const KnowledgePage = lazy(() =>
 const SkillsPage = lazy(() => import('./pages/SkillsPage').then(m => ({ default: m.SkillsPage })))
 const ModelsPage = lazy(() => import('./pages/ModelsPage').then(m => ({ default: m.ModelsPage })))
 const ThemesPage = lazy(() => import('./pages/ThemesPage').then(m => ({ default: m.ThemesPage })))
-const ProjectPage = lazy(() =>
-  import('./pages/ProjectPage').then(m => ({ default: m.ProjectPage })),
-)
 const SecurityPage = lazy(() =>
   import('./pages/SecurityPage').then(m => ({ default: m.SecurityPage })),
 )
@@ -190,7 +186,6 @@ export default function App() {
     plugins: <IconPuzzle size={14} />,
     models: <IconBrain size={14} />,
     themes: <IconPalette size={14} />,
-    project: <IconFolder size={14} />,
     security: <IconShield size={14} />,
     mobile: <IconSmartphone size={14} />,
     browser: <IconBrowser size={14} />,
@@ -371,9 +366,6 @@ export default function App() {
                     break
                   case 'themes':
                     s.setShowThemes(true)
-                    break
-                  case 'project':
-                    s.setShowProject(true)
                     break
                   case 'security':
                     s.setShowSecurity(true)
@@ -668,17 +660,6 @@ export default function App() {
           >
             <Suspense fallback={null}>
               <ThemesPage onClose={() => s.setShowThemes(false)} showToast={s.showToast} />
-            </Suspense>
-          </CompactModal>
-          <CompactModal
-            open={s.showProject}
-            onClose={() => s.setShowProject(false)}
-            title={t('app.project')}
-            icon={<IconFolder size={14} />}
-            size="auto"
-          >
-            <Suspense fallback={null}>
-              <ProjectPage onClose={() => s.setShowProject(false)} />
             </Suspense>
           </CompactModal>
           <CompactModal

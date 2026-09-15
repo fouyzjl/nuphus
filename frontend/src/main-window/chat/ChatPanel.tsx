@@ -39,8 +39,12 @@ import {
   getEffectiveModel,
   getProviderContext,
   setRelation as persistRelationToBackend,
+  getProjectDir,
+  getProjectBookmarks,
+  setProjectDir as setProjectDirCmd,
+  setProjectBookmarks as setProjectBookmarksCmd,
 } from '../lib/api'
-import type { ProviderInfo, ModelInfo } from '../lib/api'
+import type { ProviderInfo, ModelInfo, ProjectBookmark } from '../lib/api'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
@@ -184,6 +188,51 @@ interface ChatPanelProps {
   onOpenWorkflowCanvas?: () => void
   /** workflow 扳手菜单「工作流列表」：打开 WorkflowPage（等同 Ctrl+K → 工作流） */
   onOpenWorkflowList?: () => void
+}
+
+/**
+ * 旧版本把项目书签存在 localStorage 的两套键里（`nuphus_project_bookmarks` 用
+ * `{name,path}`、`nuphus_projects` 用 `{label,path}`，互不相通）→ 一次性合并进
+ * 后端单一事实源并清理旧键。返回 `null` 表示无需迁移。
+ */
+function migrateLegacyProjectBookmarks(
+  existing: ProjectBookmark[],
+): ProjectBookmark[] | null {
+  const merged = [...existing]
+  let changed = false
+  for (const key of ['nuphus_project_bookmarks', 'nuphus_projects']) {
+    let raw: string | null = null
+    try {
+      raw = localStorage.getItem(key)
+    } catch {
+      continue
+    }
+    if (raw !== null) {
+      try {
+        const arr = JSON.parse(raw)
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            const path = String(item?.path || '').trim()
+            if (!path || merged.some(b => b.path === path)) continue
+            const name =
+              String(item?.name || item?.label || '').trim() ||
+              path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ||
+              path
+            merged.push({ name, path })
+          }
+        }
+      } catch {
+        /* 数据损坏：内容忽略，但键仍清理，避免每次打开都重试 */
+      }
+      try {
+        localStorage.removeItem(key)
+        changed = true
+      } catch {
+        /* localStorage 不可用：跳过 */
+      }
+    }
+  }
+  return changed ? merged : null
 }
 
 export function ChatPanel({
@@ -561,21 +610,125 @@ export function ChatPanel({
     return () => clearInterval(t)
   }, [HINTS.length])
 
-  const [projectDir, setProjectDir] = useState(() => {
-    try {
-      return localStorage.getItem('nuphus_project_dir') || ''
-    } catch {
-      return ''
-    }
-  })
+  // ── 项目中心（唯一入口：输入框 chip 点击 / `/project` 斜杠命令）──
+  // 当前目录与书签都以**后端 prefs 为唯一事实源**：历史上前端维护两套互不相通的
+  // localStorage 键（nuphus_projects / nuphus_project_bookmarks），造成
+  // 「Ctrl+K 加的书签在输入框看不到」。
+  const [projectDir, setProjectDir] = useState('')
+  const [projectTag, setProjectTag] = useState('')
   const [dirInput, setDirInput] = useState('')
-  const [dirBookmarks, setDirBookmarks] = useState<{ label: string; path: string }[]>(() => {
+  const [dirBookmarks, setDirBookmarks] = useState<ProjectBookmark[]>([])
+  const [newBookmarkName, setNewBookmarkName] = useState('')
+  const [dirBusy, setDirBusy] = useState(false)
+  const [dirError, setDirError] = useState<string | null>(null)
+  const [dirNotice, setDirNotice] = useState<string | null>(null)
+
+  /** 路径末段名（书签默认名 / 展示名） */
+  const bookmarkNameFromPath = (p: string) =>
+    p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
+
+  /** 切换项目目录：后端落盘并向活跃会话注入 user 内部消息；失败显式提示（不再静默吞错） */
+  const applyProjectDir = useCallback(async (path: string): Promise<boolean> => {
+    setDirBusy(true)
+    setDirError(null)
+    setDirNotice(null)
     try {
-      return JSON.parse(localStorage.getItem('nuphus_projects') || '[]')
-    } catch {
-      return []
+      const st = await setProjectDirCmd(path.trim())
+      setProjectDir(st.path)
+      setProjectTag(st.tag)
+      setDirInput(st.path)
+      setDirNotice(st.path ? `已切换到「${st.name}」（记忆：${st.tag}）` : '已清除项目目录')
+      return true
+    } catch (e) {
+      setDirError(e instanceof Error ? e.message : String(e))
+      return false
+    } finally {
+      setDirBusy(false)
     }
-  })
+  }, [])
+
+  /** 书签整表提交（后端去空/去重/名称兜底），以前端显示以后端返回为准 */
+  const persistBookmarks = useCallback(async (next: ProjectBookmark[]) => {
+    setDirError(null)
+    try {
+      setDirBookmarks(await setProjectBookmarksCmd(next))
+      return true
+    } catch (e) {
+      setDirError(e instanceof Error ? e.message : String(e))
+      return false
+    }
+  }, [])
+
+  /** 打开目录选择器（浏览器无法给出绝对路径 → 走桌面对话框） */
+  const browseProjectDir = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const dir = await open({ directory: true, multiple: false, title: '选择项目目录' })
+      if (typeof dir === 'string' && dir) {
+        setDirInput(dir)
+        if (!newBookmarkName.trim()) setNewBookmarkName(bookmarkNameFromPath(dir))
+      }
+    } catch (e) {
+      setDirError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  /** 把当前输入框路径存成书签（名称缺省取目录名） */
+  const saveCurrentBookmark = async () => {
+    const path = dirInput.trim()
+    if (!path) return
+    if (dirBookmarks.some(b => b.path === path)) {
+      setDirNotice('该书签已存在')
+      return
+    }
+    const name = newBookmarkName.trim() || bookmarkNameFromPath(path)
+    if (await persistBookmarks([...dirBookmarks, { name, path }])) {
+      setNewBookmarkName('')
+      setDirNotice(`已保存书签「${name}」`)
+    }
+  }
+
+  // 启动即加载项目状态：输入框 chip 必须在未打开弹窗前就能显示当前项目名
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const [state, bookmarks] = await Promise.all([getProjectDir(), getProjectBookmarks()])
+        if (cancelled) return
+        setProjectDir(state.path)
+        setProjectTag(state.tag)
+        const merged = migrateLegacyProjectBookmarks(bookmarks)
+        setDirBookmarks(merged ?? bookmarks)
+        if (merged) await setProjectBookmarksCmd(merged)
+      } catch {
+        /* 启动读取失败：保持空态，不影响会话 */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 打开弹窗时刷新（外部改动后即时反映；迁移已在启动时完成）
+  useEffect(() => {
+    if (!dirOpen) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const [state, bookmarks] = await Promise.all([getProjectDir(), getProjectBookmarks()])
+        if (cancelled) return
+        setProjectDir(state.path)
+        setProjectTag(state.tag)
+        setDirInput(state.path)
+        setDirBookmarks(bookmarks)
+      } catch (e) {
+        if (!cancelled) setDirError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [dirOpen])
 
   const [savedConfigs, setSavedConfigs] = useState<
     { id: string; label: string; model: string; provider: string; baseUrl: string }[]
@@ -1042,6 +1195,12 @@ export function ChatPanel({
       return
     }
     setInput('')
+    // 项目中心已收敛到输入框（chip 点击 / /project）：弹窗即唯一入口，
+    // 不再走 App 级模态（Ctrl+K 的「项目配置」项已移除）。
+    if (id === 'project') {
+      setDirOpen(true)
+      return
+    }
     onCommand?.(id)
   }
 
@@ -1052,6 +1211,9 @@ export function ChatPanel({
       const refType = RES_TYPE_MAP[item.id]
       if (refType) {
         openResourcePicker(refType)
+      } else if (item.id === 'project') {
+        setInput('')
+        setDirOpen(true)
       } else {
         setInput('')
         onCommand?.(item.id)
@@ -2057,84 +2219,105 @@ export function ChatPanel({
               </IconButton>
             </div>
             <div className="input-modal-body">
-              <div className="input-modal-label">当前工作目录</div>
+              <div className="input-modal-label">当前项目</div>
               <div className="input-modal-path">
-                {projectDir || <span style={{ opacity: 0.4 }}>未设置</span>}
+                {projectDir ? (
+                  <>
+                    <strong>{bookmarkNameFromPath(projectDir)}</strong>
+                    <span className="input-modal-path-sub">{projectDir}</span>
+                  </>
+                ) : (
+                  <span style={{ opacity: 0.4 }}>未设置（相对路径以运行目录为准）</span>
+                )}
               </div>
-
-              {dirBookmarks.length > 0 && (
-                <>
-                  <div className="input-modal-label input-modal-label-gap">项目书签</div>
-                  <div className="input-modal-grid">
-                    {dirBookmarks.map(d => (
-                      <button
-                        key={d.path}
-                        className={`input-modal-chip ${projectDir === d.path ? 'active' : ''}`}
-                        onClick={() => {
-                          setProjectDir(d.path)
-                          setDirInput(d.path)
-                          try {
-                            localStorage.setItem('nuphus_project_dir', d.path)
-                          } catch {}
-                          import('../lib/api').then(m => m.setProjectDir(d.path)).catch(() => {})
-                        }}
-                      >
-                        <IconFolder size={12} />
-                        <span>{d.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
+              {projectDir && (
+                <div className="input-modal-hint">项目记忆：memory/{projectTag}.md</div>
               )}
 
-              <div className="input-modal-label input-modal-label-gap">自定义路径</div>
+              <div className="input-modal-label input-modal-label-gap">项目书签</div>
+              {dirBookmarks.length === 0 ? (
+                <div className="input-modal-hint">
+                  暂无书签：选择目录后点「保存为书签」，以后一键切换。
+                </div>
+              ) : (
+                <div className="input-modal-list">
+                  {dirBookmarks.map(b => (
+                    <div
+                      key={b.path}
+                      className={`input-modal-item ${projectDir === b.path ? 'active' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        className="input-modal-item-main"
+                        title={b.path}
+                        disabled={dirBusy}
+                        onClick={() => applyProjectDir(b.path)}
+                      >
+                        <IconFolder size={12} />
+                        <span className="input-modal-item-name">{b.name}</span>
+                        <span className="input-modal-item-path">{b.path}</span>
+                      </button>
+                      <IconButton
+                        variant="raw"
+                        className="input-modal-item-del"
+                        label={`删除书签 ${b.name}`}
+                        title="删除书签"
+                        onClick={() =>
+                          persistBookmarks(dirBookmarks.filter(x => x.path !== b.path))
+                        }
+                      >
+                        <IconX size={12} />
+                      </IconButton>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="input-modal-label input-modal-label-gap">选择目录</div>
               <div className="input-modal-input-row">
                 <input
                   className="input-modal-input"
                   value={dirInput}
                   onChange={e => setDirInput(e.target.value)}
-                  placeholder="输入完整路径..."
+                  placeholder="输入完整路径…"
                 />
+                <Button variant="default" size="sm" onClick={browseProjectDir}>
+                  浏览…
+                </Button>
+              </div>
+              <div className="input-modal-input-row">
+                <input
+                  className="input-modal-input"
+                  value={newBookmarkName}
+                  onChange={e => setNewBookmarkName(e.target.value)}
+                  placeholder="书签名称（留空取目录名）"
+                />
+                <Button
+                  variant="default"
+                  size="sm"
+                  disabled={!dirInput.trim() || dirBusy}
+                  onClick={saveCurrentBookmark}
+                >
+                  保存为书签
+                </Button>
+              </div>
+              <div className="input-modal-actions">
+                <span className="input-modal-feedback">
+                  {dirError ? (
+                    <span className="input-modal-error">{dirError}</span>
+                  ) : (
+                    dirNotice && <span className="input-modal-notice">{dirNotice}</span>
+                  )}
+                </span>
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={() => {
-                    setProjectDir(dirInput)
-                    try {
-                      localStorage.setItem('nuphus_project_dir', dirInput)
-                    } catch {}
-                    import('../lib/api').then(m => m.setProjectDir(dirInput)).catch(() => {})
-                    setDirOpen(false)
-                  }}
+                  disabled={!dirInput.trim() || dirBusy}
+                  onClick={() => applyProjectDir(dirInput)}
                 >
-                  确定
+                  {dirBusy ? '应用中…' : '应用并切换'}
                 </Button>
               </div>
-              {dirInput.trim() && !dirBookmarks.find(b => b.path === dirInput.trim()) && (
-                <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    style={{
-                      fontSize: 11,
-                      padding: '4px 10px',
-                      borderRadius: 6,
-                      border: '1px solid var(--glass-2)',
-                      background: 'var(--glass-1)',
-                      color: 'var(--accent)',
-                      cursor: 'pointer',
-                    }}
-                    onClick={() => {
-                      const label = dirInput.split(/[/\\]/).filter(Boolean).pop() || '未命名'
-                      const updated = [...dirBookmarks, { label, path: dirInput.trim() }]
-                      setDirBookmarks(updated)
-                      try {
-                        localStorage.setItem('nuphus_projects', JSON.stringify(updated))
-                      } catch {}
-                    }}
-                  >
-                    + 保存到项目书签
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </div>

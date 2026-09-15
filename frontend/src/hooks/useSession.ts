@@ -92,8 +92,6 @@ export interface SessionAPI {
   setShowKnowledge: (v: boolean) => void
   showThemes: boolean
   setShowThemes: (v: boolean) => void
-  showProject: boolean
-  setShowProject: (v: boolean) => void
   showSecurity: boolean
   setShowSecurity: (v: boolean) => void
   showBrowser: boolean
@@ -864,16 +862,6 @@ export function useSession(): SessionAPI {
         action: () => {
           setCmdPaletteOpen(false)
           modals.setShowBrowser(true)
-        },
-      },
-      {
-        id: 'project',
-        label: t('cmd.project'),
-        desc: t('cmd.projectDesc'),
-        category: t('cmd.category.settings'),
-        action: () => {
-          setCmdPaletteOpen(false)
-          modals.setShowProject(true)
         },
       },
       {

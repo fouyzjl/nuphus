@@ -683,12 +683,32 @@ export function setLanguage(lang: string) {
 
 // ── Project ──
 
-export function setProjectDir(path: string) {
-  return invoke<string>('set_project_dir', { path })
+export type ProjectBookmark = { name: string; path: string }
+/** 项目目录状态（后端 prefs 为唯一事实源） */
+export type ProjectDirState = { path: string; name: string; tag: string }
+
+/** 读取当前项目目录（bridge 的 invoke 返回可空 → 统一兜底为空态） */
+export async function getProjectDir(): Promise<ProjectDirState> {
+  const state = await invoke<ProjectDirState>('get_project_dir')
+  return state ?? { path: '', name: '', tag: 'default' }
 }
 
-export function setProjectBookmarks(bookmarks: { name: string; path: string }[]) {
-  return invoke('set_project_bookmarks', { bookmarks })
+/** 设置/切换项目目录：返回新状态；后端会向活跃会话注入一条 user 内部消息告知变更 */
+export async function setProjectDir(path: string): Promise<ProjectDirState> {
+  const state = await invoke<ProjectDirState>('set_project_dir', { path })
+  return state ?? { path, name: '', tag: 'default' }
+}
+
+/** 读取项目书签（项目中心唯一数据源） */
+export async function getProjectBookmarks(): Promise<ProjectBookmark[]> {
+  return (await invoke<ProjectBookmark[]>('get_project_bookmarks')) ?? []
+}
+
+/** 写入项目书签（整表替换；后端去空/去重/名称兜底） */
+export async function setProjectBookmarks(
+  bookmarks: ProjectBookmark[],
+): Promise<ProjectBookmark[]> {
+  return (await invoke<ProjectBookmark[]>('set_project_bookmarks', { bookmarks })) ?? bookmarks
 }
 
 // ── Session Refine ──

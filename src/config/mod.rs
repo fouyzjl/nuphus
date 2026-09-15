@@ -8,7 +8,7 @@ pub mod providers;
 pub mod registry;
 pub use last_model::{load_last_model_provider, record_last_model, resolve_model_provider_core};
 pub use model::*;
-pub use preferences::{BrowserIdentity, UserPreferences};
+pub use preferences::{BrowserIdentity, ProjectBookmark, UserPreferences};
 
 use std::path::PathBuf;
 

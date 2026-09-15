@@ -348,45 +348,126 @@ pub fn set_language(lang: String) -> Result<String, String> {
     Ok(lang)
 }
 
+/// 项目目录展示名（路径末段）：兼容正反斜杠与结尾分隔符；空路径 → 空串。
+fn project_dir_display_name(dir: &str) -> String {
+    dir.trim()
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+/// 项目记忆标签（`memory/{tag}.md` 的文件名）；空目录 → "default"。
+fn project_tag_of(dir: &str) -> String {
+    nuphus::utils::derive_project_tag_from_dir(dir).unwrap_or_else(|| "default".to_string())
+}
+
+/// 项目目录状态载荷（前端「项目中心」数据源）。
+fn project_dir_payload(path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "path": path,
+        "name": project_dir_display_name(path),
+        "tag": project_tag_of(path),
+    })
+}
+
+/// 项目切换的内部提示文案 —— 作为 **user 消息** 注入（见 `set_project_dir`）。
+/// 明确三件事：新工作目录、新项目记忆文件、自本条起旧路径/旧结论不再沿用。
+fn build_project_switch_notice(old_path: &str, new_path: &str) -> String {
+    if new_path.trim().is_empty() {
+        return format!(
+            "【项目目录已清除】\n原工作目录：{old_path}\n项目记忆文件切回 memory/default.md；相对路径以运行目录为准。"
+        );
+    }
+    let name = project_dir_display_name(new_path);
+    let new_tag = project_tag_of(new_path);
+    if old_path.trim().is_empty() {
+        format!(
+            "【项目目录已设置】\n工作目录：{new_path}（项目：{name}）\n项目记忆文件：memory/{new_tag}.md\n自本条起：相对路径以该目录为基准，项目级记忆以该文件为准。"
+        )
+    } else {
+        format!(
+            "【项目已切换】\n工作目录：{old_path} → {new_path}（项目：{name}）\n项目记忆文件：memory/{old_tag}.md → memory/{new_tag}.md\n自本条起：相对路径以新工作目录为基准；旧目录下的路径与既有结论不再沿用。",
+            old_tag = project_tag_of(old_path)
+        )
+    }
+}
+
+/// 读取当前项目目录（项目中心初始化数据源）。
+#[tauri::command]
+pub fn get_project_dir() -> Result<serde_json::Value, String> {
+    let prefs = nuphus::config::UserPreferences::load();
+    Ok(project_dir_payload(&prefs.project_dir))
+}
+
+/// 设置 / 切换项目目录 —— 项目中心的唯一入口。
+///
+/// 设计约束（2026-09-15 定稿）：
+/// - **不做提示缓存失效**：L1 是稳定前缀，失效会破坏上游 prompt cache 命中率；
+/// - 切换改由 **user 内部消息** 传达（`push_user_internal`：只进 LLM 上下文、
+///   前端历史拉取时过滤不显示），模型下一轮即以新工作目录 / 新记忆文件为准；
+/// - 覆盖全部活跃槽（leader + workflow），不再只通知 leader 一侧。
 #[tauri::command]
 pub fn set_project_dir(
     path: String,
     state: tauri::State<'_, crate::state::AppState>,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
+    let path = path.trim().to_string();
     let mut prefs = nuphus::config::UserPreferences::load();
     let old_path = prefs.project_dir.clone();
+    if old_path == path {
+        // 幂等：无变化时不重复落盘、不重复注入
+        return Ok(project_dir_payload(&path));
+    }
+
     prefs.project_dir = path.clone();
     prefs.save().map_err(|e| e.to_string())?;
 
-    // 如果有活跃 session，push 一条 system message 通知 LLM 路径变更
+    let notice = build_project_switch_notice(&old_path, &path);
     if let Ok(mut guard) = state.runtime.lock() {
         if let Some(agent) = guard.leader_agent.as_mut() {
-            let msg = if old_path.is_empty() {
-                format!("## 项目目录已设置\n项目目录已设置为: **{}**", path)
-            } else {
-                format!(
-                    "## 项目目录已变更\n项目目录已从 **{}** 变更为 **{}**",
-                    old_path, path
-                )
-            };
-            agent.session_mut().push_system(msg);
-            tracing::info!(
-                "Project dir change notification pushed to session: {} -> {}",
-                old_path,
-                path
-            );
+            agent.session_mut().push_user_internal(notice.clone());
+        }
+        if let Some(agent) = guard.workflow_agent.as_mut() {
+            agent.session_mut().push_user_internal(notice);
         }
     }
 
-    tracing::info!("Project dir set to: {}", path);
-    Ok(path)
+    tracing::info!("Project dir changed: {} -> {}", old_path, path);
+    Ok(project_dir_payload(&path))
 }
 
-/// Sync project bookmarks from frontend (localStorage-backed, no server persistence needed)
+/// 读取项目书签（项目中心数据源；与 project_dir 同源落盘 prefs）。
 #[tauri::command]
-pub fn set_project_bookmarks(bookmarks: Vec<serde_json::Value>) -> Result<(), String> {
-    tracing::info!("Project bookmarks synced: {} entries", bookmarks.len());
-    Ok(())
+pub fn get_project_bookmarks() -> Result<Vec<nuphus::config::ProjectBookmark>, String> {
+    Ok(nuphus::config::UserPreferences::load().project_bookmarks)
+}
+
+/// 写入项目书签：整表替换（前端增删后提交），去空、按路径去重、名称兜底取目录名。
+#[tauri::command]
+pub fn set_project_bookmarks(
+    bookmarks: Vec<nuphus::config::ProjectBookmark>,
+) -> Result<Vec<nuphus::config::ProjectBookmark>, String> {
+    let mut normalized: Vec<nuphus::config::ProjectBookmark> = Vec::new();
+    for bm in bookmarks {
+        let path = bm.path.trim().to_string();
+        if path.is_empty() || normalized.iter().any(|x| x.path == path) {
+            continue;
+        }
+        let name = if bm.name.trim().is_empty() {
+            project_dir_display_name(&path)
+        } else {
+            bm.name.trim().to_string()
+        };
+        normalized.push(nuphus::config::ProjectBookmark { name, path });
+    }
+
+    let mut prefs = nuphus::config::UserPreferences::load();
+    prefs.project_bookmarks = normalized.clone();
+    prefs.save().map_err(|e| e.to_string())?;
+    tracing::info!("Project bookmarks saved: {} entries", normalized.len());
+    Ok(normalized)
 }
 
 #[cfg(test)]

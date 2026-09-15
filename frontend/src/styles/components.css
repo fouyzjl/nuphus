@@ -266,6 +266,106 @@
   background: var(--accent-dim);
   color: var(--accent);
 }
+/* ── 项目中心：书签行列表（名称 + 路径 + 删除；空态由 .input-modal-hint 引导）── */
+.input-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.input-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: all var(--transition-fast);
+}
+.input-modal-item:hover {
+  background: var(--void-hover);
+}
+.input-modal-item.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.input-modal-item-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: var(--spark-secondary);
+  font-size: var(--fs-caption);
+  text-align: left;
+  cursor: pointer;
+}
+.input-modal-item.active .input-modal-item-main {
+  color: var(--accent);
+}
+.input-modal-item-main:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.input-modal-item-name {
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+.input-modal-item-path {
+  flex: 1;
+  min-width: 0;
+  color: var(--spark-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.input-modal-item-del {
+  flex-shrink: 0;
+  padding: 6px;
+  color: var(--spark-muted);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.input-modal-item:hover .input-modal-item-del,
+.input-modal-item-del:focus-visible {
+  opacity: 1;
+}
+.input-modal-item-del:hover {
+  color: var(--error);
+}
+.input-modal-hint {
+  font-size: var(--fs-caption);
+  color: var(--spark-muted);
+  line-height: 1.5;
+}
+.input-modal-path-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-mono);
+  color: var(--spark-muted);
+}
+.input-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+.input-modal-feedback {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+}
+.input-modal-notice {
+  color: var(--accent);
+}
+.input-modal-error {
+  color: var(--error);
+}
 .input-modal-input-row {
   display: flex;
   gap: 8px;

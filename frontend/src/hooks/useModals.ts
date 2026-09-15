@@ -7,7 +7,6 @@ export function useModals() {
   const [showSkills, setShowSkills] = useState(false)
   const [showKnowledge, setShowKnowledge] = useState(false)
   const [showThemes, setShowThemes] = useState(false)
-  const [showProject, setShowProject] = useState(false)
   const [showSecurity, setShowSecurity] = useState(false)
   const [showBrowser, setShowBrowser] = useState(false)
   const [showSoul, setShowSoul] = useState(false)
@@ -48,8 +47,6 @@ export function useModals() {
     setShowKnowledge,
     showThemes,
     setShowThemes,
-    showProject,
-    setShowProject,
     showSecurity,
     setShowSecurity,
     showBrowser,
