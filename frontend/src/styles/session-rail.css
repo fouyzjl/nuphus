@@ -74,8 +74,10 @@
   width: 300px;
   max-width: 82%;
   background: var(--surface-0);
-  border-right: 1px solid var(--line-1);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  /* 无边框：右缘分界完全交给外阴影（近处接触影 + 远处柔和扩散，避免 1px 描边的「线」感） */
+  box-shadow:
+    2px 0 8px rgba(0, 0, 0, 0.35),
+    12px 0 32px rgba(0, 0, 0, 0.35);
   transform: translateX(-100%);
   visibility: hidden;
   transition:
