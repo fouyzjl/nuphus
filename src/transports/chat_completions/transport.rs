@@ -571,7 +571,8 @@ impl ChatCompletionsTransport {
                         }
                     }
 
-                    let timed = tokio::time::timeout(self.idle_chunk_timeout(), stream.next()).await;
+                    let timed =
+                        tokio::time::timeout(self.idle_chunk_timeout(), stream.next()).await;
                     let chunk = match timed {
                         Ok(Some(Ok(b))) => b,
                         Ok(Some(Err(e))) => {

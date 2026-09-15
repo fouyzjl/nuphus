@@ -198,9 +198,7 @@ interface ChatPanelProps {
  * `{name,path}`、`nuphus_projects` 用 `{label,path}`，互不相通）→ 一次性合并进
  * 后端单一事实源并清理旧键。返回 `null` 表示无需迁移。
  */
-function migrateLegacyProjectBookmarks(
-  existing: ProjectBookmark[],
-): ProjectBookmark[] | null {
+function migrateLegacyProjectBookmarks(existing: ProjectBookmark[]): ProjectBookmark[] | null {
   const merged = [...existing]
   let changed = false
   for (const key of ['nuphus_project_bookmarks', 'nuphus_projects']) {
@@ -219,7 +217,10 @@ function migrateLegacyProjectBookmarks(
             if (!path || merged.some(b => b.path === path)) continue
             const name =
               String(item?.name || item?.label || '').trim() ||
-              path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ||
+              path
+                .replace(/[\\/]+$/, '')
+                .split(/[\\/]/)
+                .pop() ||
               path
             merged.push({ name, path })
           }
@@ -2134,7 +2135,6 @@ export function ChatPanel({
               .catch(() => {})
           }}
         />
-
       </CompactModal>
 
       {/* ── Skills Manager Modal ── */}

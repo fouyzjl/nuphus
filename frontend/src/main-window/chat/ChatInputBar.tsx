@@ -756,7 +756,10 @@ export function ChatInputBar({
     ttftMs && Number.isFinite(ttftMs) && ttftMs > 0 ? fmtDur(Math.round(ttftMs)) : null
   // 项目目录书签名：取路径末段（兼容 Windows 反斜杠与结尾分隔符），未设置回退空串
   const projectDirName = projectDir
-    ? projectDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || projectDir
+    ? projectDir
+        .replace(/[\\/]+$/, '')
+        .split(/[\\/]/)
+        .pop() || projectDir
     : ''
   const moodColor = MOOD_COLORS[mood || 'idle'] || MOOD_COLORS.idle
   function fmt(n: number): string {
@@ -919,9 +922,7 @@ export function ChatInputBar({
               className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
               title={projectDir || t('input.projectDir')}
               onClick={() =>
-                projectBookmarks.length > 0
-                  ? setProjectMenuOpen(o => !o)
-                  : onOpenProjectDir()
+                projectBookmarks.length > 0 ? setProjectMenuOpen(o => !o) : onOpenProjectDir()
               }
             >
               <IconFolder size={14} />

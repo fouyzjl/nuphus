@@ -438,7 +438,11 @@ impl ReactAgent {
     }
 
     /// Switch current model using an exact provider + model binding.
-    pub fn switch_model_for(&mut self, provider: &str, model_id: &str) -> Result<Arc<dyn ApiClient>> {
+    pub fn switch_model_for(
+        &mut self,
+        provider: &str,
+        model_id: &str,
+    ) -> Result<Arc<dyn ApiClient>> {
         let factory = self.client_factory.as_ref().ok_or_else(|| {
             crate::NuphusError::Agent(crate::AgentError::ModelSwitchFailed {
                 error: "ClientFactory not set, cannot switch model".to_string(),
@@ -461,7 +465,11 @@ impl ReactAgent {
         let provider = self
             .client_factory
             .as_ref()
-            .and_then(|f| f.registry().find_model(model_id).map(|(p, _)| p.name.clone()))
+            .and_then(|f| {
+                f.registry()
+                    .find_model(model_id)
+                    .map(|(p, _)| p.name.clone())
+            })
             .ok_or_else(|| crate::NuphusError::llm(format!("注册表中找不到模型 '{}'", model_id)))?;
         self.switch_model_for(&provider, model_id).map(|_| ())
     }

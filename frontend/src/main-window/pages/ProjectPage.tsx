@@ -4,19 +4,19 @@ import { IconTrash2, IconFolder } from '../../ui/Icons'
 import { Button } from '../../ui/Button'
 import { Section } from '../../ui/PageLayout'
 import { useLanguage } from '../../locales'
-import {
-  getProjectBookmarks,
-  getProjectDir,
-  setProjectBookmarks,
-  setProjectDir,
-} from '../lib/api'
+import { getProjectBookmarks, getProjectDir, setProjectBookmarks, setProjectDir } from '../lib/api'
 import type { ProjectBookmark, ProjectDirState } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
 import '../../styles/project.css'
 
 /** 路径末段名（书签默认名） */
 function nameFromPath(p: string): string {
-  return p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
+  return (
+    p
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() || p
+  )
 }
 
 /**
@@ -154,9 +154,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
             {t('project.browse')}
           </Button>
         </div>
-        {current.path && (
-          <div className="bookmark-path">项目记忆：memory/{current.tag}.md</div>
-        )}
+        {current.path && <div className="bookmark-path">项目记忆：memory/{current.tag}.md</div>}
         {/* 书签创建紧跟路径选择：选好目录 → 命名 → 加入下方书签区 */}
         <div className="compact-input-row input-row-spaced">
           <input

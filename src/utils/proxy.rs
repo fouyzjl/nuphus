@@ -44,7 +44,10 @@ fn normalize_proxy_url(proxy: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
-fn windows_registry_string(key: windows::Win32::System::Registry::HKEY, name: &str) -> Option<String> {
+fn windows_registry_string(
+    key: windows::Win32::System::Registry::HKEY,
+    name: &str,
+) -> Option<String> {
     use windows::core::PCWSTR;
     use windows::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_SZ};
 
@@ -75,10 +78,7 @@ fn windows_registry_string(key: windows::Win32::System::Registry::HKEY, name: &s
 }
 
 #[cfg(windows)]
-fn windows_registry_dword(
-    key: windows::Win32::System::Registry::HKEY,
-    name: &str,
-) -> Option<u32> {
+fn windows_registry_dword(key: windows::Win32::System::Registry::HKEY, name: &str) -> Option<u32> {
     use windows::core::PCWSTR;
     use windows::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_DWORD};
 
@@ -115,7 +115,13 @@ fn windows_system_proxy() -> Option<String> {
         .collect();
     let mut key = Default::default();
     let result = unsafe {
-        RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(path.as_ptr()), 0, KEY_READ, &mut key)
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(path.as_ptr()),
+            0,
+            KEY_READ,
+            &mut key,
+        )
     };
     if result.is_err() {
         return None;
@@ -123,7 +129,9 @@ fn windows_system_proxy() -> Option<String> {
 
     let enabled = windows_registry_dword(key, "ProxyEnable") == Some(1);
     let server = windows_registry_string(key, "ProxyServer");
-    unsafe { let _ = RegCloseKey(key); }
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
     if !enabled {
         return None;
     }
@@ -131,7 +139,11 @@ fn windows_system_proxy() -> Option<String> {
     let selected = server
         .split(';')
         .find_map(|part| part.strip_prefix("https="))
-        .or_else(|| server.split(';').find_map(|part| part.strip_prefix("http=")))
+        .or_else(|| {
+            server
+                .split(';')
+                .find_map(|part| part.strip_prefix("http="))
+        })
         .unwrap_or(server.as_str());
     normalize_proxy_url(selected)
 }

@@ -5,13 +5,13 @@ use crate::core::*;
 #[cfg(windows)]
 use ::windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 #[cfg(windows)]
-use ::windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
-#[cfg(windows)]
 use ::windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
 #[cfg(windows)]
 use ::windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
+#[cfg(windows)]
+use ::windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
 /// 读取 Windows 文件剪贴板（CF_HDROP，格式号 15）。返回绝对路径列表。
 /// 剪贴板内容不是「文件复制」（纯文本 / 位图截图 / HTML）时返回空列表。
@@ -22,7 +22,9 @@ pub fn read_file_paths() -> Result<Vec<String>> {
 
     unsafe {
         if OpenClipboard(HWND::default()).is_err() {
-            return Err(DesktopError::InputFailed("clipboard open failed".to_string()));
+            return Err(DesktopError::InputFailed(
+                "clipboard open failed".to_string(),
+            ));
         }
         let result = GetClipboardData(15).and_then(|handle| {
             let hglobal = HGLOBAL(handle.0 as *mut _);

@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  IconCheck,
-  IconEdit3,
-  IconFolder,
-  IconPlus,
-  IconTrash2,
-  IconX,
-} from '../../ui/Icons'
+import { IconCheck, IconEdit3, IconFolder, IconPlus, IconTrash2, IconX } from '../../ui/Icons'
 import { playUiSound } from '../../ui/sound'
 import { CompactModal } from '../layout/CompactModal'
 import { useLanguage } from '../../locales'
@@ -626,11 +619,7 @@ export default function SessionRail({
           })}
           {/* 折叠行：默认只列 COLLAPSED_LIMIT 条，其余点开后展开（对齐参考会话栏） */}
           {!expanded && restCount > 0 && (
-            <button
-              type="button"
-              className="sr-more-btn"
-              onClick={() => setExpanded(true)}
-            >
+            <button type="button" className="sr-more-btn" onClick={() => setExpanded(true)}>
               {t('sessionRail.expandMore', String(restCount))}
             </button>
           )}
