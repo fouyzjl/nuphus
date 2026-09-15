@@ -1396,12 +1396,12 @@ export function ChatPanel({
 
   return (
     <div className="chat-panel">
-      {/* ── Session Rail：面板级左缘挂载（自聊天区顶部 10% 起锚，
-          感应区纯几何不拦截点击）── */}
+      {/* ── Session Rail：面板级左缘挂载（收起态 = 左缘一枚色块，点击滑出左侧抽屉）── */}
       {onChatReplaced && (
         <SessionRail
           onSessionChanged={onChatReplaced}
           onNewChat={onNewChat}
+          onOpenProjectDir={() => setDirOpen(true)}
           onModeSwitched={onModeSwitched}
           locked={isProcessing}
           mood={mood}

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import {
   IconCheck,
   IconEdit3,
-  IconHistory,
+  IconFolder,
   IconPlus,
   IconTrash2,
   IconX,
@@ -29,6 +29,8 @@ interface SessionRailProps {
   onSessionChanged: () => void
   /** 新建对话（复用桌面统一入口 handleNewChat / Ctrl+N 同一逻辑源；执行中禁用） */
   onNewChat?: () => void
+  /** 打开项目中心弹窗（复用输入框项目 chip 的同一入口：ChatPanel setDirOpen(true)） */
+  onOpenProjectDir?: () => void
   /** 跨 mode 会话切换成功后同步前端 mode state（后端原子切换不单独广播 mode_changed，
    *  mode chip 依赖此回调保持一致） */
   onModeSwitched?: (mode: string) => void
@@ -55,14 +57,6 @@ function codeToTone(code: string): NoticeTone {
   if (code === 'busy' || code === 'append_pending') return 'info'
   if (code === 'mode_mismatch') return 'warning'
   return 'error'
-}
-
-/** mode → 收起色块首字母（收起态唯一信息，类型识别开关） */
-function modeToLetter(mode: string): string {
-  if (mode === 'workflow') return 'W'
-  if (mode === 'leader') return 'L'
-  if (mode === 'custom') return 'C'
-  return '·'
 }
 
 /** 通知浮层图标：按 tone 切换内嵌 SVG，避免引入额外 icon 包污染主图标库 */
@@ -114,6 +108,7 @@ function NoticeIcon({ tone }: { tone: NoticeTone }) {
 export default function SessionRail({
   onSessionChanged,
   onNewChat,
+  onOpenProjectDir,
   onModeSwitched,
   locked = false,
   mood,
@@ -351,6 +346,13 @@ export default function SessionRail({
     onNewChat?.()
   }, [onNewChat])
 
+  /** 项目中心：复用输入框项目 chip 的同一入口（ChatPanel 的 setDirOpen(true)），
+   *  打开前先收起抽屉，避免抽屉叠在弹窗后面 */
+  const handleOpenProjectDir = useCallback(() => {
+    setOpen(false)
+    onOpenProjectDir?.()
+  }, [onOpenProjectDir])
+
   const saveRename = useCallback(
     async (id: string) => {
       const draft = draftTitle.trim()
@@ -375,14 +377,11 @@ export default function SessionRail({
     playUiSound('session')
   }, [])
 
-  /** 收起色块显示的当前会话 mode（无 active 时显示中性点） */
-  const activeMode = items.find(i => i.is_active)?.mode ?? ''
-
   return (
     <>
-      {/* ── 收起色块（常驻）：收起态唯一可见元素。
-          内容 = 会话图标 + 当前会话 mode 首字母（W/L/C），点击展开/收起左侧滑动栏。
-          无 hover 感应唤出、无执行完成自动弹出：开合入口只有这一枚色块的点击。 ── */}
+      {/* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 6×48 竖条，左缘贴边、
+          右侧圆帽、实心 fg-5，hover 转 accent + 微光。点击展开/收起左侧抽屉，
+          是收起态唯一可见元素（无 hover 感应唤出、无执行完成自动弹出）。 ── */}
       <button
         ref={chipRef}
         type="button"
@@ -392,12 +391,7 @@ export default function SessionRail({
         tabIndex={open ? -1 : undefined}
         aria-label={t('sessionRail.title')}
         title={t('sessionRail.title')}
-      >
-        <IconHistory size={14} />
-        <span className={`sr-chip-letter${activeMode ? ` mode-${activeMode}` : ''}`}>
-          {modeToLetter(activeMode)}
-        </span>
-      </button>
+      />
 
       {/* 点击面板外收起：透明承接层，不压暗消息流 */}
       <div
@@ -429,12 +423,12 @@ export default function SessionRail({
         </div>
         {/* 执行中：抽屉仍可打开查看（不给「点了没反应」的错觉），条目禁用 + 顶部说明 */}
         {hardLocked && <div className="sr-drawer-hint">{t('sessionRail.busyHint')}</div>}
-        {/* 顶部新建对话：与 Ctrl+N / TitleBar 同一逻辑源（onNewChat 由 App 注入 handleNewChat） */}
-        {onNewChat && (
-          <div className="sr-new-chat">
+        {/* 操作行：新建对话 + 项目目录（等宽按钮，与 Ctrl+N / 输入框项目 chip 同一逻辑源） */}
+        <div className="sr-actions-row">
+          {onNewChat && (
             <button
               type="button"
-              className="sr-new-chat-btn"
+              className="sr-action-btn"
               onClick={handleNewChat}
               disabled={hardLocked}
               title={t('sessionRail.newChat')}
@@ -442,8 +436,19 @@ export default function SessionRail({
               <IconPlus size={13} />
               <span>{t('sessionRail.newChat')}</span>
             </button>
-          </div>
-        )}
+          )}
+          {onOpenProjectDir && (
+            <button
+              type="button"
+              className="sr-action-btn"
+              onClick={handleOpenProjectDir}
+              title={t('sessionRail.projectDir')}
+            >
+              <IconFolder size={13} />
+              <span>{t('sessionRail.projectDir')}</span>
+            </button>
+          )}
+        </div>
         <div className="sr-list">
           {items.map(it => {
             const modeText =
@@ -519,6 +524,8 @@ export default function SessionRail({
                         title={it.title || t('sessionRail.untitled')}
                         onClick={() => void handleSwitch(it.id, it.is_active)}
                       >
+                        {/* 标题完整显示（两行截断），不再挂预览正文：一行标题 + 一行缩略
+                            两边都看不全，信息价值为零（大王 2026-09-15） */}
                         {it.title || t('sessionRail.untitled')}
                       </button>
                       <button
@@ -546,9 +553,6 @@ export default function SessionRail({
                         </button>
                       )}
                     </div>
-                    {/* 预览：agent 最终回复（脱敏截断），与标题「话题 ↔ 结果」互补。
-                        抽屉内限 2 行（CSS line-clamp），长回复不撑高列表 */}
-                    {it.preview ? <div className="sr-preview">{it.preview}</div> : null}
                   </>
                 )}
               </div>

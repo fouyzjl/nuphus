@@ -132,6 +132,7 @@ const zh: Record<string, string> = {
   'sessionRail.title': '会话工作台',
   'sessionRail.collapse': '收起',
   'sessionRail.newChat': '新建对话',
+  'sessionRail.projectDir': '项目目录',
   'sessionRail.busyHint': '执行中不可切换，可发送追加指令或等待完成',
   'sessionRail.rename': '重命名会话标题',
   'sessionRail.save': '保存',

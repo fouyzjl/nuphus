@@ -134,6 +134,7 @@ const en: Record<string, string> = {
   'sessionRail.title': 'Session workbench',
   'sessionRail.collapse': 'Collapse',
   'sessionRail.newChat': 'New chat',
+  'sessionRail.projectDir': 'Project dir',
   'sessionRail.busyHint': 'Locked while executing ...append an instruction or wait',
   'sessionRail.rename': 'Rename session title',
   'sessionRail.save': 'Save',

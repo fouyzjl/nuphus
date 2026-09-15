@@ -7,61 +7,43 @@
    ═══════════════════════════════════════════ */
 @import './tokens.css';
 
-/* ── 收起色块（常驻）：左缘贴边，仅右侧圆角，纵向锚定 10%（沿用旧轨道锚点）──
-   隐喻：左侧滑出时露在面板边缘的一枚「把手」，是收起态唯一可见元素 */
+/* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 6×48 竖条，左缘贴边框、
+   右侧圆帽（上下椭圆角），实心 fg-5；hover 转 accent + 微光。
+   视觉 6px，但用 ::after 撑出 24×60 的透明热区（6px 直接点太窄） ── */
 .session-rail-chip {
   position: absolute;
   left: 0;
   top: 10%;
   z-index: 55;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  width: 48px;
+  width: 6px;
   height: 48px;
   padding: 0;
-  border: 1px solid var(--line-2);
-  border-left: none; /* 紧贴面板左缘：左无边框 */
-  border-radius: 0 var(--radius-4) var(--radius-4) 0;
-  background: transparent;
-  color: var(--fg-4);
+  border: none;
+  border-radius: 0 24px 24px 0;
+  background: var(--fg-5);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    opacity var(--dur-med) var(--ease-out),
-    transform var(--dur-med) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.session-rail-chip::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -6px;
+  bottom: -6px;
+  width: 24px;
 }
 .session-rail-chip:hover {
-  background: var(--line-1);
-  border-color: var(--line-3);
-  color: var(--fg-1);
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-dim, rgba(59, 130, 246, 0.35));
 }
 /* 抽屉展开时：色块被抽屉盖住（z-index 低于抽屉），无需额外隐藏，
    由 TSX 同步 tabIndex=-1 退出键盘焦点序列 */
 .session-rail-chip:focus-visible {
   outline: 2px solid var(--fg-4);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
-/* 色块内 mode 首字母：收敛的 fg-3 中性灰，workflow 加粗、custom 斜体（不加色相） */
-.sr-chip-letter {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1;
-  color: var(--fg-3);
-  user-select: none;
-}
-.sr-chip-letter.mode-workflow {
-  color: var(--fg-2);
-}
-.sr-chip-letter.mode-custom {
-  font-style: italic;
-}
-
 /* ── 面板外点击承接层：透明（不压暗消息流），仅负责「点外面就收起」 ── */
 .session-rail-scrim {
   position: absolute;
@@ -156,36 +138,42 @@
   color: var(--fg-4);
 }
 
-/* ── 新建对话：整行按钮（与 Ctrl+N / TitleBar 同一逻辑源）── */
-.sr-new-chat {
+/* ── 操作行：新建对话 + 项目目录（等宽并排按钮）──
+   实心底 + 居中内容 = 按钮观感；此前全宽描边空框看起来像搜索栏（大王 2026-09-15） */
+.sr-actions-row {
+  display: flex;
+  gap: 6px;
   padding: 0 var(--space-2) var(--space-2);
 }
-.sr-new-chat-btn {
-  display: flex;
+.sr-action-btn {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
+  justify-content: center;
+  gap: 5px;
   height: var(--control-h);
   padding: 0 var(--space-2);
   border: 1px solid var(--line-1);
   border-radius: var(--radius-3);
-  background: transparent;
+  background: var(--surface-2);
   font-family: inherit;
   font-size: var(--fz-md);
-  color: var(--fg-3);
-  text-align: left;
+  color: var(--fg-2);
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
-.sr-new-chat-btn:hover:not(:disabled) {
-  background: var(--line-1);
+.sr-action-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
   border-color: var(--line-2);
   color: var(--fg-1);
 }
-.sr-new-chat-btn:disabled {
+/* 执行中（hardLocked）禁用：后端 guard 双保险 */
+.sr-action-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
   color: var(--fg-5);
@@ -270,33 +258,27 @@
   font-style: italic;
 }
 
-/* ── 标题按钮（点击切换会话）：占满剩余宽度，整行都是点击热区 ── */
+/* ── 标题按钮（点击切换会话）：占满剩余宽度，整行都是点击热区；
+   标题完整显示最多两行（line-clamp），不再挂预览正文。
+   刻意不做 hover 背景块：标题已占满整行，内嵌色块会在行高亮里叠出一圈「盒子」── */
 .sr-title-btn {
   flex: 1;
   min-width: 0;
-  padding: 3px 6px;
-  margin: -3px -6px; /* 放大点击热区，不挤行内布局 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  padding: 0;
+  margin: 0;
   border: none;
-  border-radius: var(--radius-2);
   background: none;
   font-family: inherit;
   font-size: var(--fz-md);
-  line-height: 1.4;
+  line-height: 1.45;
   color: var(--fg-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
   text-align: left;
   cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-/* hover：bg 加亮 + inset 边框，与当前会话高亮视觉对齐 → 「容易看到」（大王反馈） */
-.sr-title-btn:hover:not(:disabled) {
-  color: var(--fg-1);
-  background: var(--line-3);
-  box-shadow: inset 0 0 0 1px var(--line-2);
 }
 .sr-title-btn:disabled {
   cursor: default;
@@ -308,22 +290,6 @@
 .sr-title-btn:focus-visible {
   outline: 2px solid var(--fg-4);
   outline-offset: 2px;
-}
-
-/* ── 预览：agent 最终回复（脱敏截断），与标题「话题 ↔ 结果」互补。
-   列表内限 2 行（line-clamp）并保留原换行，长回复不撑高行高。 */
-.sr-preview {
-  margin-top: 4px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: var(--fz-sm);
-  line-height: 1.5;
-  color: var(--fg-3);
-  white-space: pre-wrap;
-  word-break: break-word;
-  text-align: left;
 }
 
 /* ── 行内操作按钮（重命名 / 归档）：静态隐身，行 hover / 键盘聚焦时才现身，
