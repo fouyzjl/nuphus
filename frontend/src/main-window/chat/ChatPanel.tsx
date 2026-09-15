@@ -469,6 +469,7 @@ export function ChatPanel({
   const [modelOpen, setModelOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
+  const [modelSwitchError, setModelSwitchError] = useState<string | null>(null)
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null)
   const [providerMenuPosition, setProviderMenuPosition] = useState<{
     top: number
@@ -700,6 +701,8 @@ export function ChatPanel({
     ) => {
       if (switchingId) return
       setSwitchingId(cfg.id)
+      setModelSwitchError(null)
+      let switched = false
       try {
         const prov = allProviders.find(p => p.id === cfg.provider)
         const resolvedUrl = prov?.base_url || ''
@@ -711,6 +714,7 @@ export function ChatPanel({
           m => m.id === cfg.model && m.provider === cfg.provider,
         )?.context_window
         await switchModel(cfg.model, cfg.provider, resolvedUrl, ctxWin, mode)
+        switched = true
         playUiSound('switch')
         const limit = await getContextLimit()
         if (limit != null && limit > 0) setContextTotal(limit)
@@ -731,11 +735,13 @@ export function ChatPanel({
           ),
         )
         await new Promise(r => setTimeout(r, 300))
-      } catch {
-        /* ignore */
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[Model] switch failed:', error)
+        setModelSwitchError(`模型切换失败：${message}`)
       }
       setSwitchingId(null)
-      if (closeAfter) setModelOpen(false)
+      if (closeAfter && switched) setModelOpen(false)
     },
     [switchingId, allProviders, allModels, mode, onModelChanged],
   )
@@ -2185,6 +2191,11 @@ export function ChatPanel({
                 </IconButton>
               </div>
               <div className="cmd-modal-body">
+                {modelSwitchError && (
+                  <div className="cmd-item cmd-item--hint" style={{ color: 'var(--error)' }}>
+                    {modelSwitchError}
+                  </div>
+                )}
                 {savedConfigs.length === 0 ? (
                   <div className="cmd-modal-empty">
                     {t('modelManager.noConfigs')}

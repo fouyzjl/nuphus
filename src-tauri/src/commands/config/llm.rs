@@ -670,6 +670,21 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
     // (from_single → transport) picks it up.
     let reasoning_effort = read_provider_reasoning_effort_from_config_toml(&resolved_provider);
 
+    // Install the exact provider+model client before mutating persisted/runtime state.
+    // Failure leaves the old binding intact and emits no success event.
+    let agent_key = mode
+        .as_deref()
+        .filter(|m| AgentModels::AGENTS.contains(m))
+        .unwrap_or("leader");
+    if agent_key == "leader" {
+        let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
+        if let Some(agent) = guard.leader_agent.as_mut() {
+            agent
+                .switch_model(&resolved_provider, &resolved_model)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
     // Store config in runtime state
     let cfg = LlamaConfig {
         api_key: api_key.clone(),
@@ -686,10 +701,6 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
 
     // Agent 级模型：前端按当前 mode 切换 → 落盘写对应 agent（leader/workflow/custom）。
     // mode 缺省/未知 → 默认写 leader（锚点）。default/exec 由高级设置页配置。
-    let agent_key = mode
-        .as_deref()
-        .filter(|m| AgentModels::AGENTS.contains(m))
-        .unwrap_or("leader");
     let _ = save_agent_model(
         &state.llm_config_path,
         agent_key,

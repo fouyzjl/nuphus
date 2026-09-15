@@ -521,6 +521,13 @@ impl Runtime {
         &self.llm
     }
 
+    /// Replace the active client atomically for the next request.
+    pub fn switch_model(&mut self, provider: &str, model: &str) -> crate::Result<()> {
+        let new_client = self.agent.switch_model_for(provider, model)?;
+        self.llm = new_client;
+        Ok(())
+    }
+
     /// Get mutable Session reference
     pub fn session_mut(&mut self) -> &mut Session {
         self.agent.session_mut()

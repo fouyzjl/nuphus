@@ -53,7 +53,10 @@ pub(crate) fn build_runtime<E: EventEmitter + Clone>(
             tool_permissions: tool_permissions_ref,
         })
         .emitter(Arc::new(emitter.clone()))
-        .pause_flag(pause_flag.clone());
+        .pause_flag(pause_flag.clone())
+        .client_factory(nuphus::llm::ClientFactory::new(
+            nuphus::config::load_registry().map_err(|e| e.to_string())?,
+        ));
 
     let runtime = builder.build()?;
 

@@ -437,25 +437,33 @@ impl ReactAgent {
         Some(parts.join("\n\n"))
     }
 
-    /// Switch current model
+    /// Switch current model using an exact provider + model binding.
+    pub fn switch_model_for(&mut self, provider: &str, model_id: &str) -> Result<Arc<dyn ApiClient>> {
+        let factory = self.client_factory.as_ref().ok_or_else(|| {
+            crate::NuphusError::Agent(crate::AgentError::ModelSwitchFailed {
+                error: "ClientFactory not set, cannot switch model".to_string(),
+            })
+        })?;
+        let new_client = factory.create_client_for(provider, model_id).map_err(|e| {
+            crate::NuphusError::Agent(crate::AgentError::ModelSwitchFailed {
+                error: e.to_string(),
+            })
+        })?;
+        self.llm = new_client.clone();
+        self.config.model = model_id.to_string();
+        self.config.provider = provider.to_string();
+        tracing::info!("Switched to provider={}, model={}", provider, model_id);
+        Ok(new_client)
+    }
+
+    /// Legacy model-only switch retained for callers that do not have provider context.
     pub fn switch_model(&mut self, model_id: &str) -> Result<()> {
-        if let Some(ref factory) = self.client_factory {
-            let new_client = factory.create_client(model_id).map_err(|e| {
-                crate::NuphusError::Agent(crate::AgentError::ModelSwitchFailed {
-                    error: format!("switch model failed: {}", e),
-                })
-            })?;
-            self.llm = new_client;
-            self.config.model = model_id.to_string();
-            tracing::info!("Switched to model: {}", model_id);
-            Ok(())
-        } else {
-            Err(crate::NuphusError::Agent(
-                crate::AgentError::ModelSwitchFailed {
-                    error: "ClientFactory not set, cannot switch model".to_string(),
-                },
-            ))
-        }
+        let provider = self
+            .client_factory
+            .as_ref()
+            .and_then(|f| f.registry().find_model(model_id).map(|(p, _)| p.name.clone()))
+            .ok_or_else(|| crate::NuphusError::llm(format!("注册表中找不到模型 '{}'", model_id)))?;
+        self.switch_model_for(&provider, model_id).map(|_| ())
     }
 
     /// Execute a single tool call (with full-chain safety checks)
