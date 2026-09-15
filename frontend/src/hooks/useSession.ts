@@ -156,6 +156,10 @@ export interface SessionAPI {
   /** 最近一次运行的 workflow id（run 结束后保留，供步骤参数查看） */
   lastWorkflowId: string | null
   isWorkflowPaused: boolean
+  /** 步骤面板是否被用户收起。收起只隐藏 UI，不清空运行数据（否则误关一次即永久丢失） */
+  workflowPanelDismissed: boolean
+  dismissWorkflowPanel: () => void
+  showWorkflowPanel: () => void
   handleWfPause: () => Promise<void>
   handleWfResume: () => Promise<void>
   handleWorkflowPermCancel: () => void
@@ -1039,6 +1043,9 @@ export function useSession(): SessionAPI {
     setWorkflowRunId: execUI.setWorkflowRunId,
     lastWorkflowId: execUI.lastWorkflowId,
     isWorkflowPaused: execUI.isWorkflowPaused,
+    workflowPanelDismissed: execUI.workflowPanelDismissed,
+    dismissWorkflowPanel: execUI.dismissWorkflowPanel,
+    showWorkflowPanel: execUI.showWorkflowPanel,
     handleWfPause: agentControl.handleWfPause,
     handleWfResume: agentControl.handleWfResume,
     handleWorkflowPermCancel: agentControl.handleWorkflowPermCancel,
