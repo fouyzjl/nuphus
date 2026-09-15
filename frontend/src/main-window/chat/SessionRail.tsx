@@ -36,6 +36,14 @@ function relativeTime(ms: number, t: (key: string, ...args: string[]) => string)
   return t('sessionRail.timeDays', String(Math.floor(hours / 24)))
 }
 
+/** mode → 标识首字母（方形小标只放一个字母：L=leader / W=workflow / C=custom） */
+function modeToLetter(mode: string): string {
+  if (mode === 'workflow') return 'W'
+  if (mode === 'leader') return 'L'
+  if (mode === 'custom') return 'C'
+  return '·'
+}
+
 interface SessionRailProps {
   /** 切换成功后由父级重拉 get_chat_history 整体替换气泡 */
   onSessionChanged: () => void
@@ -535,11 +543,13 @@ export default function SessionRail({
                   </div>
                 ) : (
                   <>
-                    {modeText && (
-                      <span className={`sr-mode-badge mode-${it.mode}`} aria-hidden="true">
-                        {modeText.toUpperCase()}
-                      </span>
-                    )}
+                    <span
+                      className={`sr-mode-badge mode-${it.mode}`}
+                      title={modeText}
+                      aria-label={modeText}
+                    >
+                      {modeToLetter(it.mode)}
+                    </span>
                     <button
                       type="button"
                       className={`sr-title-btn${it.is_active ? ' active' : ''}`}

@@ -7,16 +7,16 @@
    ═══════════════════════════════════════════ */
 @import './tokens.css';
 
-/* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 6×48 竖条，左缘贴边框、
+/* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 8×58 竖条，左缘贴边框、
    右侧圆帽（上下椭圆角），实心 fg-5；hover 转 accent + 微光。
-   视觉 6px，但用 ::after 撑出 24×60 的透明热区（6px 直接点太窄） ── */
+   视觉 8px，但用 ::after 撑出 24×70 的透明热区（8px 直接点太窄） ── */
 .session-rail-chip {
   position: absolute;
   left: 0;
   top: 10%;
   z-index: 55;
-  width: 6px;
-  height: 48px;
+  width: 8px;
+  height: 58px;
   padding: 0;
   border: none;
   border-radius: 0 24px 24px 0;
@@ -238,20 +238,20 @@
   gap: var(--space-2);
 }
 
-/* ── 会话模式铭牌：LEADER/WORKFLOW/CUSTOM 会话在标题前显示模式标识牌。
-   去色相后统一 fg-3 中性灰 + 6% 白底 + line-1 边框，与「克制灰透明」主线一致；
+/* ── 会话模式标识：方形椭圆角小标，只放 mode 首字母（L / W / C）——
+   去色相统一 fg-3 中性灰 + line-1 底与描边，与「克制灰透明」主线一致；
    区分性靠字重 / italic 保留（leader 500 / workflow 600 / custom 500 italic） */
 .sr-mode-badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  padding: 1px 5px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--radius-1);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
+  line-height: 1;
   color: var(--fg-3);
   background: var(--line-1);
   border: 1px solid var(--line-1);
