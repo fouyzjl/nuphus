@@ -41,9 +41,11 @@ import {
   setRelation as persistRelationToBackend,
   getProjectDir,
   getProjectBookmarks,
+  setProjectDir as setProjectDirCmd,
   setProjectBookmarks as setProjectBookmarksCmd,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark } from '../lib/api'
+import { friendlyIpcError } from '../lib/ipcError'
 import { CompactModal } from '../layout/CompactModal'
 import { ProjectCenter } from '../pages/ProjectPage'
 import { WelcomeScreen } from './WelcomeScreen'
@@ -611,13 +613,14 @@ export function ChatPanel({
     return () => clearInterval(t)
   }, [HINTS.length])
 
-  // ── 项目中心（唯一入口：输入框 chip 点击 / `/project` 斜杠命令）──
+  // ── 项目中心（唯一入口：输入框 chip / `/project` 斜杠命令）──
   // 界面复用 ProjectCenter（原「Ctrl+K → 项目配置」版式）；数据源为后端配置
-  // （preferences 是当前目录与书签的单一事实源）。此处只持有 chip 展示所需状态。
+  // （preferences 是当前目录与书签的单一事实源）。此处持有 chip 展示与快捷菜单数据。
   const [projectDir, setProjectDir] = useState('')
+  const [projectBookmarks, setProjectBookmarks] = useState<ProjectBookmark[]>([])
 
-  // 启动加载项目状态（输入框 chip 需在未打开弹窗前即可显示当前项目名），
-  // 并一次性迁移旧版 localStorage 书签（旧版两套键互不相通 → 合并进后端）
+  // 启动加载项目状态（chip 需在未打开弹窗前即可显示当前项目名）
+  // + 一次性迁移旧版 localStorage 书签（旧版两套键互不相通 → 合并进后端）
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -626,6 +629,7 @@ export function ChatPanel({
         if (cancelled) return
         setProjectDir(state.path)
         const merged = migrateLegacyProjectBookmarks(bookmarks)
+        setProjectBookmarks(merged ?? bookmarks)
         if (merged) await setProjectBookmarksCmd(merged)
       } catch {
         /* 启动读取失败：保持空态，不影响会话 */
@@ -633,6 +637,17 @@ export function ChatPanel({
     })()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  /** chip 快捷菜单选中书签 → 切换项目（落盘 + 后端通知活跃会话 + HUD 反馈） */
+  const switchProject = useCallback(async (path: string) => {
+    try {
+      const state = await setProjectDirCmd(path)
+      setProjectDir(state.path)
+      hudUpdate(`项目已切换：${state.name}`, 'info')
+    } catch (e) {
+      hudUpdate(friendlyIpcError(e, '切换项目失败'), 'warning')
     }
   }, [])
 
@@ -2093,6 +2108,8 @@ export function ChatPanel({
           onImageAttach={handleImageAttach}
           onFileAttach={handleFileAttach}
           projectDir={projectDir}
+          projectBookmarks={projectBookmarks}
+          onSwitchProject={switchProject}
           onOpenProjectDir={() => setDirOpen(true)}
           onOpenPrinciples={onOpenPrinciples}
           onOpenAnnotations={onOpenAnnotations}
@@ -2117,7 +2134,17 @@ export function ChatPanel({
         icon={<IconFolder size={14} />}
         size="auto"
       >
-        <ProjectCenter onApplied={state => setProjectDir(state.path)} />
+        <ProjectCenter
+          onApplied={state => {
+            setProjectDir(state.path)
+            setDirOpen(false)
+            hudUpdate(`项目已切换：${state.name}`, 'info')
+            // 弹窗内可能增删过书签 → 同步 chip 快捷菜单数据
+            getProjectBookmarks()
+              .then(setProjectBookmarks)
+              .catch(() => {})
+          }}
+        />
 
       </CompactModal>
 

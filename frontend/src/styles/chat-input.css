@@ -346,6 +346,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 项目 chip 容器：下拉菜单的定位锚点（与 + 按钮容器同构） */
+.input-project-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 /* 语音按钮在容器内：取消 absolute 独立定位，由 flex 排布 */
 .input-actions .chat-voice-btn {
   position: static;
@@ -397,6 +403,18 @@
 }
 .input-tool-menu-item svg {
   flex-shrink: 0;
+}
+/* 项目快捷切换菜单：复用工具菜单定位（right:0 由 .input-tool-menu 提供）——
+   菜单自 chip 右边缘向左展开，避免在输入框右下角向右溢出；这里只放宽最小宽度。
+   必须声明在 .input-tool-menu 之后 —— 同优先级下后者生效，否则 min-width 被覆盖。 */
+.input-project-menu {
+  min-width: 176px;
+}
+.input-project-menu-current {
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 10px;
+  color: var(--accent);
 }
 .input-tool-menu-label {
   font-size: 12.5px;

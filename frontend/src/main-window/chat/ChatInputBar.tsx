@@ -114,6 +114,10 @@ interface ChatInputBarProps {
   /** 项目目录 */
   projectDir: string
   onOpenProjectDir: () => void
+  /** 项目书签（chip 快捷切换菜单的数据源） */
+  projectBookmarks?: { name: string; path: string }[]
+  /** 菜单里选中书签 → 切换项目（父级执行落盘 + 反馈） */
+  onSwitchProject?: (path: string) => void
   /** 打开教导原则弹窗（Session Shelf 配套：原则/标注自记忆页迁入） */
   onOpenPrinciples?: () => void
   /** 打开关系标注弹窗 */
@@ -178,6 +182,8 @@ export function ChatInputBar({
   onImageAttach,
   projectDir,
   onOpenProjectDir,
+  projectBookmarks = [],
+  onSwitchProject,
   onOpenPrinciples,
   onOpenAnnotations,
   hints,
@@ -205,6 +211,7 @@ export function ChatInputBar({
     gate.reason === 'workflow' ? '工作流正在执行中，暂不可用！' : '当前有任务执行中，暂不可用！'
   // ── 工具弹窗（附件/图片/项目目录 合并入口）──
   const [toolMenuOpen, setToolMenuOpen] = useState(false)
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   /** workflow 扳手菜单（hover/click 展开）：工作流画布 / 工作流列表 / 工具箱（Ctrl+U） */
   const [wfMenuOpen, setWfMenuOpen] = useState(false)
   const wfMenuRef = useRef<HTMLDivElement>(null)
@@ -254,6 +261,18 @@ export function ChatInputBar({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [toolMenuOpen])
+  // ── 项目快捷切换菜单：点 chip 直接列出书签（一次点击即切换，不必先进管理弹窗）──
+  const projectMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!projectMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (projectMenuRef.current && !projectMenuRef.current.contains(e.target as Node)) {
+        setProjectMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [projectMenuOpen])
   // ── ctx 详情弹窗（hover 显示 cache/tok/step/ms，带悬停桥接防间隙丢失）──
   const [ctxHover, setCtxHover] = useState(false)
   const ctxTimer = useRef<number | null>(null)
@@ -892,18 +911,61 @@ export function ChatInputBar({
         </div>
         {/* ── 右下角操作组：+ 工具 / 语音 / 发送 固定在整个输入框右下角 ── */}
         <div className="input-actions">
-          {/* ── 项目目录（自「+」菜单移出）：文件夹图标 + 当前书签目录名，点击进入目录管理 ── */}
-          <button
-            type="button"
-            className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
-            title={projectDir || t('input.projectDir')}
-            onClick={onOpenProjectDir}
-          >
-            <IconFolder size={14} />
-            <span className="input-project-chip-name">
-              {projectDirName || t('input.projectDir')}
-            </span>
-          </button>
+          {/* ── 项目目录（自「+」菜单移出）：文件夹图标 + 当前目录名。
+              点击＝直接列出书签一键切换（快捷路径）；无书签时直接进管理弹窗 ── */}
+          <div className="input-project-wrap" ref={projectMenuRef}>
+            <button
+              type="button"
+              className={`input-project-chip${projectDirName ? ' is-set' : ''}`}
+              title={projectDir || t('input.projectDir')}
+              onClick={() =>
+                projectBookmarks.length > 0
+                  ? setProjectMenuOpen(o => !o)
+                  : onOpenProjectDir()
+              }
+            >
+              <IconFolder size={14} />
+              <span className="input-project-chip-name">
+                {projectDirName || t('input.projectDir')}
+              </span>
+            </button>
+            {projectMenuOpen && (
+              <div className="input-tool-menu input-project-menu" role="menu">
+                {projectBookmarks.map(b => (
+                  <button
+                    key={b.path}
+                    type="button"
+                    className="input-tool-menu-item"
+                    role="menuitem"
+                    title={b.path}
+                    onClick={() => {
+                      setProjectMenuOpen(false)
+                      onSwitchProject?.(b.path)
+                    }}
+                  >
+                    <IconFolder size={14} />
+                    <span className="input-tool-menu-label">{b.name}</span>
+                    {b.path === projectDir && (
+                      <span className="input-project-menu-current">当前</span>
+                    )}
+                  </button>
+                ))}
+                <div className="input-tool-menu-divider" />
+                <button
+                  type="button"
+                  className="input-tool-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setProjectMenuOpen(false)
+                    onOpenProjectDir()
+                  }}
+                >
+                  <IconWrench size={14} />
+                  <span className="input-tool-menu-label">管理项目…</span>
+                </button>
+              </div>
+            )}
+          </div>
           {/* ── 工具入口「+」：附件/图片合并弹窗 ── */}
           <div className="input-tool-plus-wrap" ref={toolMenuRef}>
             <IconButton

@@ -11,6 +11,7 @@ import {
   setProjectDir,
 } from '../lib/api'
 import type { ProjectBookmark, ProjectDirState } from '../lib/api'
+import { friendlyIpcError } from '../lib/ipcError'
 import '../../styles/project.css'
 
 /** 路径末段名（书签默认名） */
@@ -51,7 +52,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         setDirInput(state.path)
         setBookmarks(list)
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+        if (!cancelled) setError(friendlyIpcError(e, '读取项目配置失败'))
       }
     })()
     return () => {
@@ -78,7 +79,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         flashSaved()
         onApplied?.(state)
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(friendlyIpcError(e, '切换项目目录失败'))
       } finally {
         setBusy(false)
       }
@@ -94,7 +95,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         if (!bookmarkName.trim()) setBookmarkName(nameFromPath(dir))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyIpcError(e))
     }
   }
 
@@ -115,7 +116,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
       setBookmarkName('')
       flashSaved()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyIpcError(e))
     }
   }
 
@@ -124,7 +125,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
     try {
       setBookmarks(await setProjectBookmarks(bookmarks.filter(b => b.path !== path)))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyIpcError(e))
     }
   }
 
