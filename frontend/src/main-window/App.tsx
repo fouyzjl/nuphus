@@ -454,10 +454,7 @@ export default function App() {
               // 旧实现 `wfStop(id)` 既没 await 也没 catch：IPC 一旦失败就是 unhandled
               // rejection，用户侧表现是"点了终止毫无反应"。把失败原因弹出来。
               const fail = (e: unknown) =>
-                s.showToast(
-                  `终止失败：${e instanceof Error ? e.message : String(e)}`,
-                  'error',
-                )
+                s.showToast(`终止失败：${e instanceof Error ? e.message : String(e)}`, 'error')
               if (s.workflowRunId) {
                 wfStop(s.workflowRunId).catch(fail)
               } else {
