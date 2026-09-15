@@ -38,6 +38,40 @@
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent-dim, rgba(59, 130, 246, 0.35));
 }
+/* 执行中（aria-disabled）：色块弱化、不响应 hover 高亮，点击改为浮出轻提示 */
+.session-rail-chip[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.session-rail-chip[aria-disabled='true']:hover {
+  background: var(--fg-5);
+  box-shadow: none;
+}
+
+/* ── 执行中点击色块的轻提示：贴色块右侧浮出，纯提示不拦点击（3s 后由组件卸载） ── */
+.sr-chip-hint {
+  --notice-rgb: var(--info-rgb);
+  position: absolute;
+  left: 16px;
+  top: 10%;
+  margin-top: 29px; /* 色块高 58 的中线 */
+  transform: translateY(-50%);
+  z-index: 57;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 7px 10px;
+  border-radius: var(--radius-3);
+  background: var(--surface-0);
+  border: 1px solid var(--line-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: var(--fz-xs);
+  line-height: 1.5;
+  color: var(--fg-2);
+  pointer-events: none;
+  animation: srNoticeIn 200ms var(--ease-out);
+}
 /* 抽屉展开时：色块被抽屉盖住（z-index 低于抽屉），无需额外隐藏，
    由 TSX 同步 tabIndex=-1 退出键盘焦点序列 */
 .session-rail-chip:focus-visible {
@@ -131,14 +165,6 @@
 .sr-head-btn:hover {
   color: var(--fg-1);
   background: var(--line-2);
-}
-
-/* 执行中说明：抽屉可打开查看，但切换被后端守卫拒绝 */
-.sr-drawer-hint {
-  padding: 0 var(--space-3) var(--space-2);
-  font-size: var(--fz-xs);
-  line-height: 1.5;
-  color: var(--fg-4);
 }
 
 /* ── 新会话：整行浅色实心按钮（居中图标+文案，对齐参考会话栏的主操作样式）── */

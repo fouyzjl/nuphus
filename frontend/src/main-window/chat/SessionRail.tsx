@@ -146,6 +146,9 @@ export default function SessionRail({
   const [open, setOpen] = useState(false)
   /** 列表展开态：默认只显示前 COLLAPSED_LIMIT 条，其余折叠（对齐参考会话栏） */
   const [expanded, setExpanded] = useState(false)
+  /** 执行中点色块的轻提示（色块旁浮出，数秒后自动消失） */
+  const [chipHint, setChipHint] = useState(false)
+  const chipHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const chipRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const stoppedRef = useRef(false)
@@ -176,11 +179,23 @@ export default function SessionRail({
       // 执行完成：只播完成音效，不再自动弹出工作台（大王 2026-09-15：完成也不自动弹出）。
       // 错误结束（mood='error'）不播完成音——execution_error 已播错误音效，避免重叠
       if (mood !== 'error') playUiSound('done')
+      // 执行结束：清掉残留的「执行中不可切换」提示
+      setChipHint(false)
     }
   }, [hardLocked, mood])
 
   // 收起抽屉：保留编辑态草稿（重新展开后仍在编辑中），不做静默丢弃
   const closeDrawer = useCallback(() => setOpen(false), [])
+
+  /** 执行中点色块的轻提示：色块旁浮出，3s 自动消失（重复点击重置计时） */
+  const flashChipHint = useCallback(() => {
+    setChipHint(true)
+    if (chipHintTimer.current) clearTimeout(chipHintTimer.current)
+    chipHintTimer.current = setTimeout(() => {
+      chipHintTimer.current = null
+      setChipHint(false)
+    }, 3000)
+  }, [])
 
   // 抽屉展开期：Esc 收起（编辑中先退编辑）、点击面板与色块之外收起
   useEffect(() => {
@@ -211,6 +226,7 @@ export default function SessionRail({
   useEffect(
     () => () => {
       if (noticeTimer.current) clearTimeout(noticeTimer.current)
+      if (chipHintTimer.current) clearTimeout(chipHintTimer.current)
     },
     [],
   )
@@ -411,19 +427,36 @@ export default function SessionRail({
 
   return (
     <>
-      {/* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 6×48 竖条，左缘贴边、
+      {/* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 8×58 竖条，左缘贴边、
           右侧圆帽、实心 fg-5，hover 转 accent + 微光。点击展开/收起左侧抽屉，
-          是收起态唯一可见元素（无 hover 感应唤出、无执行完成自动弹出）。 ── */}
+          是收起态唯一可见元素（无 hover 感应唤出、无执行完成自动弹出）。
+          执行中不可开合：点击只浮出「执行中不可切换」轻提示。 ── */}
       <button
         ref={chipRef}
         type="button"
         className="session-rail-chip"
-        onClick={() => setOpen(o => !o)}
-        aria-expanded={open}
+        onClick={() => {
+          // 执行中不可开合：给轻提示，不弹抽屉（后端 guard 之外再给个明确反馈）
+          if (hardLocked) {
+            flashChipHint()
+            return
+          }
+          setOpen(o => !o)
+        }}
+        aria-expanded={open ? true : undefined}
+        aria-disabled={hardLocked || undefined}
         tabIndex={open ? -1 : undefined}
         aria-label={t('sessionRail.title')}
         title={t('sessionRail.title')}
       />
+
+      {/* 执行中点色块的轻提示：色块右侧浮出，3s 自动消失 */}
+      {chipHint && (
+        <div className="sr-chip-hint" role="status" aria-live="polite">
+          <NoticeIcon tone="info" />
+          <span>{t('sessionRail.busyHint')}</span>
+        </div>
+      )}
 
       {/* 点击面板外收起：透明承接层，不压暗消息流 */}
       <div
@@ -465,8 +498,6 @@ export default function SessionRail({
             <IconX size={14} />
           </button>
         </div>
-        {/* 执行中：抽屉仍可打开查看（不给「点了没反应」的错觉），条目禁用 + 顶部说明 */}
-        {hardLocked && <div className="sr-drawer-hint">{t('sessionRail.busyHint')}</div>}
         {/* 新会话：整行浅色实心按钮（与 Ctrl+N / TitleBar 同一逻辑源） */}
         {onNewChat && (
           <div className="sr-new-chat-wrap">
