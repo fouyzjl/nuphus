@@ -418,7 +418,21 @@ fn main() {
                 tracing::warn!("Failed to pre-create overlay window: {e}");
             }
 
-            // HUD 窗口由 tauri.conf.json 声明，无需手动创建
+            // HUD 窗口由 tauri.conf.json 声明（label="hud"，visible=false），
+            // **不走 `hud::create()`** —— 但拖动检测与初始定位必须在这里挂上：
+            //   · 不挂 `observe_user_drag`：`HUD_USER_MOVED` 永远为 false，用户拖完
+            //     下一次 show() 又会被弹回右下角（表现为"拖不动"）；
+            //   · 不定位：窗口会停在 macOS 给的默认位置（实测屏幕中部），只是在
+            //     children 可见前没人发现；首次 show() 虽然也会定位，但启动即就位更稳。
+            match app.get_webview_window("hud") {
+                Some(hud) => {
+                    commands::hud::observe_user_drag(&hud);
+                    commands::hud::position_bottom_right(&hud);
+                }
+                None => {
+                    tracing::warn!("HUD 窗口缺失：tauri.conf.json 应声明 label=\"hud\" 的窗口")
+                }
+            }
 
             // ── 注册工作流全局快捷键（不依赖鼠标）──
             {
