@@ -41,6 +41,8 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** 选中的书签（点书签行仅选中，由「设为当前」应用 → 避免误点即切换） */
+  const [selectedPath, setSelectedPath] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -76,6 +78,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         const state = await setProjectDir(target)
         setCurrent(state)
         setDirInput(state.path)
+        setSelectedPath('')
         flashSaved()
         onApplied?.(state)
       } catch (e) {
@@ -92,6 +95,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
       const dir = await open({ directory: true, multiple: false, title: t('project.selectDir') })
       if (typeof dir === 'string' && dir) {
         setDirInput(dir)
+        setSelectedPath('')
         if (!bookmarkName.trim()) setBookmarkName(nameFromPath(dir))
       }
     } catch (e) {
@@ -152,13 +156,31 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         {current.path && (
           <div className="bookmark-path">项目记忆：memory/{current.tag}.md</div>
         )}
-        <div className="form-footer">
-          {saved && <span className="badge badge-success">{t('common.saved')}</span>}
-          {error && <span style={{ color: 'var(--error)', fontSize: 'var(--fz-xs)' }}>{error}</span>}
-          <Button variant="primary" disabled={busy || !dirInput.trim()} onClick={() => applyDir(dirInput)}>
-            {t('project.setCurrent')}
+        {/* 书签创建紧跟路径选择：选好目录 → 命名 → 加入下方书签区 */}
+        <div className="compact-input-row input-row-spaced">
+          <input
+            className="compact-input input-flex"
+            value={bookmarkName}
+            onChange={e => setBookmarkName(e.target.value)}
+            placeholder={t('project.bookmarkNamePlaceholder')}
+          />
+          <Button
+            variant="default"
+            size="sm"
+            disabled={!dirInput.trim()}
+            onClick={handleAddBookmark}
+          >
+            {t('project.addBookmark')}
           </Button>
         </div>
+        {(saved || error) && (
+          <div className="form-footer">
+            {saved && <span className="badge badge-success">{t('common.saved')}</span>}
+            {error && (
+              <span style={{ color: 'var(--error)', fontSize: 'var(--fz-xs)' }}>{error}</span>
+            )}
+          </div>
+        )}
       </Section>
 
       {/* ── 项目书签 ── */}
@@ -173,14 +195,20 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
             {bookmarks.map(b => (
               <div
                 key={b.path}
-                className="page-list-item"
+                className={`page-list-item${selectedPath === b.path ? ' active' : ''}`}
                 role="button"
                 tabIndex={0}
-                onClick={() => applyDir(b.path)}
+                title={b.path}
+                onClick={() => {
+                  setSelectedPath(b.path)
+                  setDirInput(b.path)
+                  setError(null)
+                }}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    applyDir(b.path)
+                    setSelectedPath(b.path)
+                    setDirInput(b.path)
                   }
                 }}
               >
@@ -209,15 +237,14 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
             ))}
           </div>
         )}
-        <div className="compact-input-row input-row-spaced">
-          <input
-            className="compact-input input-flex"
-            value={bookmarkName}
-            onChange={e => setBookmarkName(e.target.value)}
-            placeholder={t('project.bookmarkNamePlaceholder')}
-          />
-          <Button variant="default" size="sm" onClick={handleAddBookmark}>
-            {t('project.addBookmark')}
+        {/* 选中书签后由此应用 —— 避免「点一下就切换」的误操作；未选中时作用于上方路径 */}
+        <div className="form-footer">
+          <Button
+            variant="primary"
+            disabled={busy || !(selectedPath || dirInput).trim()}
+            onClick={() => applyDir(selectedPath || dirInput)}
+          >
+            {t('project.setCurrent')}
           </Button>
         </div>
       </Section>

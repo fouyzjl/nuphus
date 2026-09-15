@@ -21,3 +21,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 书签选中态：点选目标（仅选中，由下方「设为当前」应用） */
+.page-list-item.active {
+  background: var(--glass-1);
+  border-color: var(--accent);
+}
