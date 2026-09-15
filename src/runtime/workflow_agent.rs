@@ -323,6 +323,12 @@ impl WorkflowAgent {
         self.tools.get_schemas()
     }
 
+    /// 记录「项目目录」状态变化：下一轮随 ACTIVE REMINDERS 注入一次（见 ReminderQueue::set_once）。
+    pub fn set_project_reminder(&mut self, text: String) {
+        self.reminders
+            .set_once(crate::agent::reminders::PROJECT_DIR_REMINDER_ID, text);
+    }
+
     /// Build system prompt (cached)
     fn build_system_prompt(&mut self) -> String {
         if self.cached_prompt.is_none() {

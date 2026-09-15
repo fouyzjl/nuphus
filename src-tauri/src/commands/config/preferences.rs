@@ -372,26 +372,20 @@ fn project_dir_payload(path: &str) -> serde_json::Value {
     })
 }
 
-/// 项目切换的内部提示文案 —— 作为 **user 消息** 注入（见 `set_project_dir`）。
-/// 明确三件事：新工作目录、新项目记忆文件、自本条起旧路径/旧结论不再沿用。
-fn build_project_switch_notice(old_path: &str, new_path: &str) -> String {
-    if new_path.trim().is_empty() {
-        return format!(
-            "【项目目录已清除】\n原工作目录：{old_path}\n项目记忆文件切回 memory/default.md；相对路径以运行目录为准。"
-        );
+/// 项目目录**状态**文案 —— 写入会话 ACTIVE REMINDERS（每轮随 user 消息注入）。
+///
+/// 用状态式表述而非「已切换」事件：模型每一轮都能直接看到当前工作目录与记忆文件，
+/// 因此切换发生在任何时刻（含执行中 agent 不在槽内）都不会错过通知。
+fn project_state_reminder(path: &str) -> String {
+    if path.trim().is_empty() {
+        return "当前项目目录：未设置（相对路径以运行目录为准）。".to_string();
     }
-    let name = project_dir_display_name(new_path);
-    let new_tag = project_tag_of(new_path);
-    if old_path.trim().is_empty() {
-        format!(
-            "【项目目录已设置】\n工作目录：{new_path}（项目：{name}）\n项目记忆文件：memory/{new_tag}.md\n自本条起：相对路径以该目录为基准，项目级记忆以该文件为准。"
-        )
-    } else {
-        format!(
-            "【项目已切换】\n工作目录：{old_path} → {new_path}（项目：{name}）\n项目记忆文件：memory/{old_tag}.md → memory/{new_tag}.md\n自本条起：相对路径以新工作目录为基准；旧目录下的路径与既有结论不再沿用。",
-            old_tag = project_tag_of(old_path)
-        )
-    }
+    format!(
+        "当前项目目录：{}（项目「{}」，记忆文件 memory/{}.md）——相对路径以该目录为基准；其它项目的路径与既有结论不再沿用。",
+        path,
+        project_dir_display_name(path),
+        project_tag_of(path)
+    )
 }
 
 /// 读取当前项目目录（项目中心初始化数据源）。
@@ -424,13 +418,16 @@ pub fn set_project_dir(
     prefs.project_dir = path.clone();
     prefs.save().map_err(|e| e.to_string())?;
 
-    let notice = build_project_switch_notice(&old_path, &path);
+    // 项目目录变化 → 写入**一次性**提醒：下一轮对话由既有注入位随 user 消息带出一次
+    // （reminders 链路，见 ReminderQueue::set_once），不触碰系统提示前缀缓存，
+    // 也不会每轮重复注入形成噪声。
+    let reminder = project_state_reminder(&path);
     if let Ok(mut guard) = state.runtime.lock() {
         if let Some(agent) = guard.leader_agent.as_mut() {
-            agent.session_mut().push_user_internal(notice.clone());
+            agent.set_project_reminder(reminder.clone());
         }
         if let Some(agent) = guard.workflow_agent.as_mut() {
-            agent.session_mut().push_user_internal(notice);
+            agent.set_project_reminder(reminder);
         }
     }
 

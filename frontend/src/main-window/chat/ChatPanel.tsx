@@ -533,7 +533,6 @@ export function ChatPanel({
   const SLASH_ITEMS = useMemo(
     () => [
       { id: 'new-chat', label: '/new', desc: t('slash.new'), category: '' },
-      { id: 'project', label: '/project', desc: t('slash.project'), category: '' },
       { id: 'models', label: '/models', desc: t('slash.models'), category: '' },
       { id: 'themes', label: '/themes', desc: t('slash.themes'), category: '' },
       { id: 'security', label: '/security', desc: t('slash.security'), category: '' },
@@ -556,7 +555,6 @@ export function ChatPanel({
     knowledge: <IconFile size={14} />,
     models: <IconBrain size={14} />,
     themes: <IconPalette size={14} />,
-    project: <IconFolder size={14} />,
     security: <IconShield size={14} />,
     browser: <IconBrowser size={14} />,
     soul: <IconSparkles size={14} />,
@@ -1116,12 +1114,6 @@ export function ChatPanel({
       return
     }
     setInput('')
-    // 项目中心已收敛到输入框（chip 点击 / /project）：弹窗即唯一入口，
-    // 不再走 App 级模态（Ctrl+K 的「项目配置」项已移除）。
-    if (id === 'project') {
-      setDirOpen(true)
-      return
-    }
     onCommand?.(id)
   }
 
@@ -1132,9 +1124,6 @@ export function ChatPanel({
       const refType = RES_TYPE_MAP[item.id]
       if (refType) {
         openResourcePicker(refType)
-      } else if (item.id === 'project') {
-        setInput('')
-        setDirOpen(true)
       } else {
         setInput('')
         onCommand?.(item.id)

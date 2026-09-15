@@ -436,6 +436,14 @@ impl Runtime {
             .unwrap_or_default()
     }
 
+    /// 记录「项目目录」状态变化：写入一次性提醒，由下一轮注入位随 user 消息带出
+    /// 一次（见 ReminderQueue::set_once）—— 不触碰系统提示前缀缓存，也不每轮重复注入。
+    pub fn set_project_reminder(&mut self, text: String) {
+        self.agent
+            .reminders
+            .set_once(crate::agent::reminders::PROJECT_DIR_REMINDER_ID, text);
+    }
+
     /// Switch mode — handles WorkflowAgent session lifecycle
     pub fn set_mode(&mut self, mode: Mode) {
         let old_mode = self.config.mode;
