@@ -400,7 +400,7 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             let _llm_enter = llm_span.enter();
 
             // Streaming call (with cancel flag + smart retry), TextDelta emitted to frontend in real-time
-            let max_llm_retries: u32 = 10;
+            let max_llm_retries: u32 = 3;
             let mut llm_retry: u32 = 0;
             // 成功 attempt 的流式耗时（生成速度 = 输出 tokens / 该耗时）
             // 仅在下方循环 Ok 分支（break 前）初始化；失败 attempt 一律
@@ -598,7 +598,20 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                                 ),
                             });
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                        let mut remaining = wait_ms;
+                        while remaining > 0 {
+                            if cancel_flag.load(Ordering::SeqCst) {
+                                return Ok(crate::AgentOutput {
+                                    message: "任务已被用户中断".to_string(),
+                                    success: false,
+                                    steps: self.agent.steps.clone(),
+                                    retry_session: None,
+                                });
+                            }
+                            let slice = remaining.min(100);
+                            tokio::time::sleep(std::time::Duration::from_millis(slice)).await;
+                            remaining -= slice;
+                        }
                     }
                 }
             };
