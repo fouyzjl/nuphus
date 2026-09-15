@@ -23,6 +23,18 @@ import '../../styles/session-rail.css'
 const POLL_INTERVAL_MS = 5000
 /** 会话变更去抖：2s 内只触发一次 onSessionChanged，防轮询翻转连续触发风暴 */
 const SWITCH_NOTICE_THROTTLE_MS = 2000
+/** 列表默认展示条数，超出部分折叠为「展开其余 N 个会话」（对齐参考会话栏版式） */
+const COLLAPSED_LIMIT = 6
+
+/** updated_at（Unix 毫秒）→ 行尾相对时间（刚刚 / N分钟 / N小时 / N天） */
+function relativeTime(ms: number, t: (key: string, ...args: string[]) => string): string {
+  const minutes = Math.floor((Date.now() - ms) / 60_000)
+  if (minutes < 1) return t('sessionRail.timeJustNow')
+  if (minutes < 60) return t('sessionRail.timeMinutes', String(minutes))
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t('sessionRail.timeHours', String(hours))
+  return t('sessionRail.timeDays', String(Math.floor(hours / 24)))
+}
 
 interface SessionRailProps {
   /** 切换成功后由父级重拉 get_chat_history 整体替换气泡 */
@@ -124,6 +136,8 @@ export default function SessionRail({
   const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null)
   /** 抽屉开合态：默认收起（只露色块），点击色块才伸出 */
   const [open, setOpen] = useState(false)
+  /** 列表展开态：默认只显示前 COLLAPSED_LIMIT 条，其余折叠（对齐参考会话栏） */
+  const [expanded, setExpanded] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const stoppedRef = useRef(false)
@@ -204,11 +218,18 @@ export default function SessionRail({
       if (!stoppedRef.current && r) {
         const list = r.items || []
         const canSwitch = r.can_switch !== false
-        // 签名守卫：id+active+标题+顺序未变则不 setItems——提炼/追加等后台写入只改
+        // 签名守卫：id+active+标题+分钟桶未变则不 setItems——提炼/追加等后台写入只改
         // 消息内容与 updated_at，列表视图零重绘（消除轮询期闪动）；activeId 检测
         // 仍基于本轮新数据，不受影响。签名含顺序（数组序），新建/归档必然变化。
+        // ⚠️ updated_at 以「分钟桶」入签名（非原始毫秒）：行尾相对时间需随分钟自增，
+        //    否则无其它变化时列表永不重绘、时间会僵在旧值；分钟粒度最多每分钟一次重绘。
         const sig = list
-          .map(i => `${i.id}|${i.is_active ? 1 : 0}|${i.title}|${i.preview || ''}`)
+          .map(
+            i =>
+              `${i.id}|${i.is_active ? 1 : 0}|${i.title}|${i.preview || ''}|${Math.floor(
+                (i.updated_at || 0) / 60_000,
+              )}`,
+          )
           .join(';')
         if (sig !== listSigRef.current) {
           listSigRef.current = sig
@@ -377,6 +398,9 @@ export default function SessionRail({
     playUiSound('session')
   }, [])
 
+  const visibleItems = expanded ? items : items.slice(0, COLLAPSED_LIMIT)
+  const restCount = Math.max(0, items.length - COLLAPSED_LIMIT)
+
   return (
     <>
       {/* ── 收起色块（常驻）：沿用原「引导标志块」样式 —— 6×48 竖条，左缘贴边、
@@ -411,46 +435,47 @@ export default function SessionRail({
       >
         <div className="sr-drawer-head">
           <span className="sr-drawer-title">{t('sessionRail.title')}</span>
+          {/* 项目目录：与输入框项目 chip 同一入口（ChatPanel setDirOpen(true) → ProjectCenter） */}
+          {onOpenProjectDir && (
+            <button
+              type="button"
+              className="sr-head-btn"
+              onClick={handleOpenProjectDir}
+              title={t('sessionRail.projectDir')}
+              aria-label={t('sessionRail.projectDir')}
+            >
+              <IconFolder size={14} />
+            </button>
+          )}
           <button
             type="button"
-            className="sr-collapse-btn"
+            className="sr-head-btn"
             onClick={closeDrawer}
             title={t('sessionRail.collapse')}
             aria-label={t('sessionRail.collapse')}
           >
-            <IconX size={13} />
+            <IconX size={14} />
           </button>
         </div>
         {/* 执行中：抽屉仍可打开查看（不给「点了没反应」的错觉），条目禁用 + 顶部说明 */}
         {hardLocked && <div className="sr-drawer-hint">{t('sessionRail.busyHint')}</div>}
-        {/* 操作行：新建对话 + 项目目录（等宽按钮，与 Ctrl+N / 输入框项目 chip 同一逻辑源） */}
-        <div className="sr-actions-row">
-          {onNewChat && (
+        {/* 新会话：整行浅色实心按钮（与 Ctrl+N / TitleBar 同一逻辑源） */}
+        {onNewChat && (
+          <div className="sr-new-chat-wrap">
             <button
               type="button"
-              className="sr-action-btn"
+              className="sr-new-chat-btn"
               onClick={handleNewChat}
               disabled={hardLocked}
               title={t('sessionRail.newChat')}
             >
-              <IconPlus size={13} />
+              <IconPlus size={15} />
               <span>{t('sessionRail.newChat')}</span>
             </button>
-          )}
-          {onOpenProjectDir && (
-            <button
-              type="button"
-              className="sr-action-btn"
-              onClick={handleOpenProjectDir}
-              title={t('sessionRail.projectDir')}
-            >
-              <IconFolder size={13} />
-              <span>{t('sessionRail.projectDir')}</span>
-            </button>
-          )}
-        </div>
+          </div>
+        )}
         <div className="sr-list">
-          {items.map(it => {
+          {visibleItems.map(it => {
             const modeText =
               it.mode === 'workflow'
                 ? t('input.mode.workflow')
@@ -510,24 +535,24 @@ export default function SessionRail({
                   </div>
                 ) : (
                   <>
-                    <div className="sr-head">
-                      {modeText && (
-                        <span className={`sr-mode-badge mode-${it.mode}`} aria-hidden="true">
-                          {modeText.toUpperCase()}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className={`sr-title-btn${it.is_active ? ' active' : ''}`}
-                        disabled={it.is_active || hardLocked}
-                        aria-current={it.is_active ? 'true' : undefined}
-                        title={it.title || t('sessionRail.untitled')}
-                        onClick={() => void handleSwitch(it.id, it.is_active)}
-                      >
-                        {/* 标题完整显示（两行截断），不再挂预览正文：一行标题 + 一行缩略
-                            两边都看不全，信息价值为零（大王 2026-09-15） */}
-                        {it.title || t('sessionRail.untitled')}
-                      </button>
+                    {modeText && (
+                      <span className={`sr-mode-badge mode-${it.mode}`} aria-hidden="true">
+                        {modeText.toUpperCase()}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className={`sr-title-btn${it.is_active ? ' active' : ''}`}
+                      disabled={it.is_active || hardLocked}
+                      aria-current={it.is_active ? 'true' : undefined}
+                      title={it.title || t('sessionRail.untitled')}
+                      onClick={() => void handleSwitch(it.id, it.is_active)}
+                    >
+                      {it.title || t('sessionRail.untitled')}
+                    </button>
+                    {/* 行尾相对时间：hover 时淡出让位给操作按钮，避免按钮挤动布局 */}
+                    <span className="sr-time">{relativeTime(it.updated_at, t)}</span>
+                    <span className="sr-actions">
                       <button
                         type="button"
                         className="sr-edit-btn"
@@ -552,12 +577,22 @@ export default function SessionRail({
                           <IconTrash2 size={12} />
                         </button>
                       )}
-                    </div>
+                    </span>
                   </>
                 )}
               </div>
             )
           })}
+          {/* 折叠行：默认只列 COLLAPSED_LIMIT 条，其余点开后展开（对齐参考会话栏） */}
+          {!expanded && restCount > 0 && (
+            <button
+              type="button"
+              className="sr-more-btn"
+              onClick={() => setExpanded(true)}
+            >
+              {t('sessionRail.expandMore', String(restCount))}
+            </button>
+          )}
         </div>
 
         {notice && (
