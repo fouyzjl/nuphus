@@ -221,6 +221,11 @@ impl ResponsesTransport {
     async fn send_sse(&self, body: &Value, cancel_flag: Option<&AtomicBool>) -> Result<String> {
         let url = self.config.endpoint();
         let mut last_error: Option<String> = None;
+        // 代理回落策略与 chat_completions 通道一致：先直连，连接层失败才切代理。
+        // 系统代理可能是陈旧残留（代理软件已退出、注册表仍启用），无条件套用会把请求
+        // 全部导向已失效的代理 —— 直连可用时绝不代理。
+        let proxy_url = crate::utils::proxy::detect_proxy_url();
+        let mut use_proxy = false;
 
         for attempt in 0..2u32 {
             if let Some(flag) = cancel_flag {
@@ -243,13 +248,14 @@ impl ResponsesTransport {
             let mut builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(self.config.timeout_secs));
-            let proxy_url = crate::utils::proxy::detect_proxy_url();
-            if let Some(proxy) = proxy_url {
-                builder = builder.proxy(reqwest::Proxy::all(&proxy).map_err(|e| {
-                    NuphusError::LLM(LLMError::HttpBuildFailed {
-                        error: format!("proxy {proxy}: {e}"),
-                    })
-                })?);
+            if use_proxy {
+                if let Some(ref proxy) = proxy_url {
+                    builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|e| {
+                        NuphusError::LLM(LLMError::HttpBuildFailed {
+                            error: format!("proxy {proxy}: {e}"),
+                        })
+                    })?);
+                }
             }
             let client = match builder.build() {
                 Ok(c) => c,
@@ -280,7 +286,11 @@ impl ResponsesTransport {
             let response = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    // 连接层错误（TCP/DNS/TLS/超时）→ 重试
+                    // 连接层错误（TCP/DNS/TLS/超时）→ 直连失败则切代理重试一次
+                    if !use_proxy && proxy_url.is_some() && (e.is_connect() || e.is_timeout()) {
+                        tracing::info!("[responses] 直连失败，回落代理重试");
+                        use_proxy = true;
+                    }
                     last_error = Some(format!("responses request failed: {e}"));
                     continue;
                 }
