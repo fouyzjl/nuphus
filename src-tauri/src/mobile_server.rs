@@ -727,7 +727,9 @@ async fn post_interrupt<R: tauri::Runtime>(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let state = ctx.app.state::<AppState>();
-    match crate::commands::process::lifecycle::interrupt(state) {
+    // interrupt 现为 async：桌面端与手机端共用，两边都会连带取消活动工作流
+    // （agent 循环阻塞在 workflow_run 工具调用里时，光置 cancel_flag 停不下来）
+    match crate::commands::process::lifecycle::interrupt(state).await {
         Ok(_) => (
             StatusCode::OK,
             Json(serde_json::json!({ "status": "terminated" })),

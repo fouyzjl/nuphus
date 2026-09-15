@@ -10,10 +10,30 @@ use std::sync::atomic::Ordering;
 use tauri::State;
 
 #[tauri::command]
-pub fn interrupt(state: State<'_, AppState>) -> Result<String, String> {
+pub async fn interrupt(state: State<'_, AppState>) -> Result<String, String> {
     state.cancel_flag.store(true, Ordering::SeqCst);
     nuphus::agent::pause::clear_pause_action_id(&state.signals);
-    tracing::info!("[INTERRUPT] cancel_flag set to true");
+
+    // 工作流是由 WorkflowAgent 在一次 `workflow_run` 工具调用内部执行的：执行期间
+    // agent 循环**阻塞在这个工具调用里**，`cancel_flag` 要等工具返回后才被检查 ——
+    // 也就是说只置 cancel_flag，正在跑（或正停在 wait 步骤）的工作流根本停不下来，
+    // 而本命令仍返回 Ok → 用户侧表现就是"点了中断毫无反应"。
+    //
+    // 用户点「中断」的意图是"停掉当前执行"，所以这里一并取消活动工作流。
+    // `active_id` 由执行器 set_active/clear_active 维护，wait 步骤轮询期间也一直有值。
+    // mark_user_cancelled 是既有机制：工具返回后 react_loop 据此不再重启工作流。
+    if let Some(wf_id) = nuphus::workflow::hud_control::active_id(&state.signals) {
+        let engine = state.workflow_engine.read().await;
+        engine.cancel_workflow(&wf_id).await;
+        nuphus::workflow::hud_control::mark_user_cancelled();
+        tracing::info!(
+            "[INTERRUPT] cancel_flag set + cancelled active workflow: {}",
+            wf_id
+        );
+    } else {
+        tracing::info!("[INTERRUPT] cancel_flag set (no active workflow)");
+    }
+
     Ok("Task interrupted".to_string())
 }
 

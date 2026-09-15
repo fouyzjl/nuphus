@@ -88,9 +88,22 @@ fn main() {
                         let engine = state.workflow_engine.clone();
                         let signals = state.signals.clone();
                         let key = shortcut.to_string();
+                        let app = app.clone();
                         tauri::async_runtime::spawn(async move {
                             let active_id = nuphus::workflow::hud_control::active_id(&signals);
-                            if let Some(id) = active_id {
+                            // 旧实现是 `if let Some(id) = active_id { ... }` 且**没有 else**：
+                            // 取不到活动工作流时两个快捷键都静默失效，用户按了毫无反馈
+                            // （active_id 由执行器 set_active/clear_active 维护）。
+                            let Some(id) = active_id else {
+                                tracing::warn!("[Hotkey] {} 无活动工作流，已忽略", key);
+                                crate::commands::hud::show(
+                                    &app,
+                                    "当前没有正在运行的工作流",
+                                    "warning",
+                                );
+                                return;
+                            };
+                            {
                                 let engine = engine.read().await;
                                 // Ctrl+Q = 暂停/继续切换
                                 if key.contains('Q') && !key.contains("Shift") {
