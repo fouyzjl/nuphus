@@ -389,7 +389,14 @@ export function WorkflowTaskPanel({
           <span className="wfst-title">工作流</span>
         </div>
         {onClose && (
-          <button className="wfst-close-btn" onClick={onClose} aria-label="Close">
+          // 「收起」而非「关闭」：只隐藏 UI，不清空运行数据——收起后由右下角胶囊
+          // 或 Ctrl+Shift+W 展开（旧文案叫"关闭"，容易让人以为数据会被丢弃）。
+          <button
+            className="wfst-close-btn"
+            onClick={onClose}
+            aria-label="收起"
+            title="收起 (Ctrl+Shift+W)"
+          >
             <svg
               width="12"
               height="12"

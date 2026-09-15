@@ -678,6 +678,38 @@
   color: var(--spark-primary);
 }
 
+/* 步骤面板被收起后的恢复入口：贴在面板原位（right/bottom 与 .wfst-panel 一致），
+   让「收起」永远是可逆的，并且把暂停/终止入口一起找回来。 */
+.wfst-restore-pill {
+  position: fixed;
+  right: 20px;
+  bottom: 160px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: var(--border-divider);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  box-shadow: var(--shadow-elevated);
+  color: var(--spark-secondary);
+  font-size: var(--fz-xs);
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.wfst-restore-pill:hover {
+  background: var(--glass-3);
+  color: var(--spark-primary);
+}
+
+.wfst-restore-paused {
+  color: var(--spark-dim);
+}
+
 /* ── Progress bar (system-native style) ── */
 .wfst-progress {
   padding: 8px 12px 4px;

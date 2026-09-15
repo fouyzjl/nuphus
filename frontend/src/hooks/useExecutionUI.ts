@@ -85,6 +85,9 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
   // WorkflowAgent 是否有过任何执行活动（用于退出 Workflow 模式时的确认弹窗，一旦设 true 永不自动清除）
   const [hasWorkflowActivity, setHasWorkflowActivity] = useState(false)
   const [isWorkflowPaused, setIsWorkflowPaused] = useState(false)
+  // 步骤面板被用户**收起**（≠ 清空数据）。面板可见性原本直接等于 workflowRunSteps 非空，
+  // 而 ✕ 又直接清空该数组，于是误关一次就既丢数据、又没有任何入口能把它找回来。
+  const [workflowPanelDismissed, setWorkflowPanelDismissed] = useState(false)
   const [showWorkflowPermConfirm, setShowWorkflowPermConfirm] = useState(false)
   const [showWorkflowExitConfirm, setShowWorkflowExitConfirm] = useState(false)
 
@@ -185,6 +188,7 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
           setWorkflowRunId(str(data.workflow_id) || null)
           setLastWorkflowId(str(data.workflow_id) || null)
           setHasWorkflowActivity(true) // 持久标记：WorkflowAgent 确实执行了内容
+          setWorkflowPanelDismissed(false) // 新一轮运行：面板自动展开（上一轮的收起状态不该继承）
           break
         }
         case 'step_run_started': {
@@ -246,6 +250,13 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
       unlisten.then(fn => fn())
     }
   }, [])
+
+  // 工作流步骤面板的收起 / 展开。
+  // 收起**只隐藏 UI，不清空 workflowRunSteps**：这是「关了就再也打不开」的修复点——
+  // 数组是全仓唯一的面板可见性来源，且只由运行事件写入，清空后除非有新的 step_run_started
+  // 否则永远回不来（面板里的暂停/终止/紧急停止入口也跟着一起丢）。
+  const dismissWorkflowPanel = useCallback(() => setWorkflowPanelDismissed(true), [])
+  const showWorkflowPanel = useCallback(() => setWorkflowPanelDismissed(false), [])
 
   return {
     // Execution trace UI
@@ -315,6 +326,9 @@ export function useExecutionUI(showToast: (msg: string, type?: Toast['type']) =>
     setLastWorkflowId,
     isWorkflowPaused,
     setIsWorkflowPaused,
+    workflowPanelDismissed,
+    dismissWorkflowPanel,
+    showWorkflowPanel,
     showWorkflowPermConfirm,
     setShowWorkflowPermConfirm,
     showWorkflowExitConfirm,

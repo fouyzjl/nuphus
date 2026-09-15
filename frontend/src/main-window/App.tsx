@@ -214,6 +214,18 @@ export default function App() {
       },
     },
     { key: 'u', ctrl: true, handler: () => setShowDesktopToolbar((p: boolean) => !p) },
+    {
+      // 工作流步骤面板：收起 / 展开。
+      // 面板可见性 ≡ workflowRunSteps 非空 且 未被用户收起，所以这里只在有运行数据时响应。
+      key: 'w',
+      ctrl: true,
+      shift: true,
+      handler: () => {
+        if (s.workflowRunSteps.length === 0) return
+        if (s.workflowPanelDismissed) s.showWorkflowPanel()
+        else s.dismissWorkflowPanel()
+      },
+    },
   ])
 
   // ── 手机端「新会话」遥控跟随：POST /new-chat 已完成**后端转场**（归档 → 当前槽置
@@ -442,17 +454,29 @@ export default function App() {
           />
 
           <WorkflowTaskPanel
-            visible={s.workflowRunSteps.length > 0}
+            visible={s.workflowRunSteps.length > 0 && !s.workflowPanelDismissed}
             steps={s.workflowRunSteps}
             workflowId={s.lastWorkflowId}
             isPaused={s.isWorkflowPaused}
             onTerminate={() => {
-              if (s.workflowRunId) wfStop(s.workflowRunId)
-              else s.handleInterrupt()
+              // 旧实现 `wfStop(id)` 既没 await 也没 catch：IPC 一旦失败就是 unhandled
+              // rejection，用户侧表现是"点了终止毫无反应"。把失败原因弹出来。
+              const fail = (e: unknown) =>
+                s.showToast(
+                  `终止失败：${e instanceof Error ? e.message : String(e)}`,
+                  'error',
+                )
+              if (s.workflowRunId) {
+                wfStop(s.workflowRunId).catch(fail)
+              } else {
+                // 没有 run id 时退化为中断当前执行
+                // （interrupt 现已同时取消活动工作流，见 process/lifecycle.rs）
+                s.handleInterrupt().catch(fail)
+              }
             }}
             onPause={() => s.handleWfPause()}
             onResume={() => s.handleWfResume()}
-            onClose={() => s.setWorkflowRunSteps([])}
+            onClose={() => s.dismissWorkflowPanel()}
             onReRun={() => {
               const wid = s.lastWorkflowId
               if (wid) executeWorkflowRun(wid)
@@ -461,6 +485,21 @@ export default function App() {
               s.forceReset()
             }}
           />
+
+          {/* 面板被收起但仍有运行数据时的恢复入口——同时也是暂停/终止的找回入口。
+              旧实现把面板 ✕ 直接接到 setWorkflowRunSteps([])，一旦误关就既丢数据、
+              又没有任何入口能把它找回来（面板可见性只由该数组驱动，且只由运行事件写入）。 */}
+          {s.workflowRunSteps.length > 0 && s.workflowPanelDismissed && (
+            <button
+              className="wfst-restore-pill"
+              onClick={() => s.showWorkflowPanel()}
+              title="展开工作流步骤面板 (Ctrl+Shift+W)"
+            >
+              <IconWorkflow size={13} />
+              <span>工作流 · {s.workflowRunSteps.length} 步</span>
+              {s.isWorkflowPaused && <span className="wfst-restore-paused">已暂停</span>}
+            </button>
+          )}
 
           {/* ── Command Palette（Ctrl+K） ── */}
           <CommandPalette
