@@ -41,10 +41,11 @@ import {
   setRelation as persistRelationToBackend,
   getProjectDir,
   getProjectBookmarks,
-  setProjectDir as setProjectDirCmd,
   setProjectBookmarks as setProjectBookmarksCmd,
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark } from '../lib/api'
+import { CompactModal } from '../layout/CompactModal'
+import { ProjectCenter } from '../pages/ProjectPage'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
@@ -611,84 +612,12 @@ export function ChatPanel({
   }, [HINTS.length])
 
   // ── 项目中心（唯一入口：输入框 chip 点击 / `/project` 斜杠命令）──
-  // 当前目录与书签都以**后端 prefs 为唯一事实源**：历史上前端维护两套互不相通的
-  // localStorage 键（nuphus_projects / nuphus_project_bookmarks），造成
-  // 「Ctrl+K 加的书签在输入框看不到」。
+  // 界面复用 ProjectCenter（原「Ctrl+K → 项目配置」版式）；数据源为后端配置
+  // （preferences 是当前目录与书签的单一事实源）。此处只持有 chip 展示所需状态。
   const [projectDir, setProjectDir] = useState('')
-  const [projectTag, setProjectTag] = useState('')
-  const [dirInput, setDirInput] = useState('')
-  const [dirBookmarks, setDirBookmarks] = useState<ProjectBookmark[]>([])
-  const [newBookmarkName, setNewBookmarkName] = useState('')
-  const [dirBusy, setDirBusy] = useState(false)
-  const [dirError, setDirError] = useState<string | null>(null)
-  const [dirNotice, setDirNotice] = useState<string | null>(null)
 
-  /** 路径末段名（书签默认名 / 展示名） */
-  const bookmarkNameFromPath = (p: string) =>
-    p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
-
-  /** 切换项目目录：后端落盘并向活跃会话注入 user 内部消息；失败显式提示（不再静默吞错） */
-  const applyProjectDir = useCallback(async (path: string): Promise<boolean> => {
-    setDirBusy(true)
-    setDirError(null)
-    setDirNotice(null)
-    try {
-      const st = await setProjectDirCmd(path.trim())
-      setProjectDir(st.path)
-      setProjectTag(st.tag)
-      setDirInput(st.path)
-      setDirNotice(st.path ? `已切换到「${st.name}」（记忆：${st.tag}）` : '已清除项目目录')
-      return true
-    } catch (e) {
-      setDirError(e instanceof Error ? e.message : String(e))
-      return false
-    } finally {
-      setDirBusy(false)
-    }
-  }, [])
-
-  /** 书签整表提交（后端去空/去重/名称兜底），以前端显示以后端返回为准 */
-  const persistBookmarks = useCallback(async (next: ProjectBookmark[]) => {
-    setDirError(null)
-    try {
-      setDirBookmarks(await setProjectBookmarksCmd(next))
-      return true
-    } catch (e) {
-      setDirError(e instanceof Error ? e.message : String(e))
-      return false
-    }
-  }, [])
-
-  /** 打开目录选择器（浏览器无法给出绝对路径 → 走桌面对话框） */
-  const browseProjectDir = async () => {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const dir = await open({ directory: true, multiple: false, title: '选择项目目录' })
-      if (typeof dir === 'string' && dir) {
-        setDirInput(dir)
-        if (!newBookmarkName.trim()) setNewBookmarkName(bookmarkNameFromPath(dir))
-      }
-    } catch (e) {
-      setDirError(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  /** 把当前输入框路径存成书签（名称缺省取目录名） */
-  const saveCurrentBookmark = async () => {
-    const path = dirInput.trim()
-    if (!path) return
-    if (dirBookmarks.some(b => b.path === path)) {
-      setDirNotice('该书签已存在')
-      return
-    }
-    const name = newBookmarkName.trim() || bookmarkNameFromPath(path)
-    if (await persistBookmarks([...dirBookmarks, { name, path }])) {
-      setNewBookmarkName('')
-      setDirNotice(`已保存书签「${name}」`)
-    }
-  }
-
-  // 启动即加载项目状态：输入框 chip 必须在未打开弹窗前就能显示当前项目名
+  // 启动加载项目状态（输入框 chip 需在未打开弹窗前即可显示当前项目名），
+  // 并一次性迁移旧版 localStorage 书签（旧版两套键互不相通 → 合并进后端）
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -696,9 +625,7 @@ export function ChatPanel({
         const [state, bookmarks] = await Promise.all([getProjectDir(), getProjectBookmarks()])
         if (cancelled) return
         setProjectDir(state.path)
-        setProjectTag(state.tag)
         const merged = migrateLegacyProjectBookmarks(bookmarks)
-        setDirBookmarks(merged ?? bookmarks)
         if (merged) await setProjectBookmarksCmd(merged)
       } catch {
         /* 启动读取失败：保持空态，不影响会话 */
@@ -708,27 +635,6 @@ export function ChatPanel({
       cancelled = true
     }
   }, [])
-
-  // 打开弹窗时刷新（外部改动后即时反映；迁移已在启动时完成）
-  useEffect(() => {
-    if (!dirOpen) return
-    let cancelled = false
-    void (async () => {
-      try {
-        const [state, bookmarks] = await Promise.all([getProjectDir(), getProjectBookmarks()])
-        if (cancelled) return
-        setProjectDir(state.path)
-        setProjectTag(state.tag)
-        setDirInput(state.path)
-        setDirBookmarks(bookmarks)
-      } catch (e) {
-        if (!cancelled) setDirError(e instanceof Error ? e.message : String(e))
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [dirOpen])
 
   const [savedConfigs, setSavedConfigs] = useState<
     { id: string; label: string; model: string; provider: string; baseUrl: string }[]
@@ -2187,10 +2093,7 @@ export function ChatPanel({
           onImageAttach={handleImageAttach}
           onFileAttach={handleFileAttach}
           projectDir={projectDir}
-          onOpenProjectDir={() => {
-            setDirInput(projectDir)
-            setDirOpen(true)
-          }}
+          onOpenProjectDir={() => setDirOpen(true)}
           onOpenPrinciples={onOpenPrinciples}
           onOpenAnnotations={onOpenAnnotations}
           hints={HINTS}
@@ -2206,122 +2109,17 @@ export function ChatPanel({
         />
       </div>
 
-      {/* ── Project directory Modal ── */}
-      {dirOpen && (
-        <div className="input-modal-overlay" onClick={() => setDirOpen(false)}>
-          <div className="input-modal" onClick={e => e.stopPropagation()}>
-            <div className="input-modal-header">
-              <span>
-                <IconFolder size={14} /> 项目目录
-              </span>
-              <IconButton variant="modal-close" label="关闭" onClick={() => setDirOpen(false)}>
-                <IconX size={14} />
-              </IconButton>
-            </div>
-            <div className="input-modal-body">
-              <div className="input-modal-label">当前项目</div>
-              <div className="input-modal-path">
-                {projectDir ? (
-                  <>
-                    <strong>{bookmarkNameFromPath(projectDir)}</strong>
-                    <span className="input-modal-path-sub">{projectDir}</span>
-                  </>
-                ) : (
-                  <span style={{ opacity: 0.4 }}>未设置（相对路径以运行目录为准）</span>
-                )}
-              </div>
-              {projectDir && (
-                <div className="input-modal-hint">项目记忆：memory/{projectTag}.md</div>
-              )}
+      {/* ── 项目中心（唯一入口：输入框项目 / `/project`）：沿用原项目配置版式 ── */}
+      <CompactModal
+        open={dirOpen}
+        onClose={() => setDirOpen(false)}
+        title={t('projectDir.title')}
+        icon={<IconFolder size={14} />}
+        size="auto"
+      >
+        <ProjectCenter onApplied={state => setProjectDir(state.path)} />
 
-              <div className="input-modal-label input-modal-label-gap">项目书签</div>
-              {dirBookmarks.length === 0 ? (
-                <div className="input-modal-hint">
-                  暂无书签：选择目录后点「保存为书签」，以后一键切换。
-                </div>
-              ) : (
-                <div className="input-modal-list">
-                  {dirBookmarks.map(b => (
-                    <div
-                      key={b.path}
-                      className={`input-modal-item ${projectDir === b.path ? 'active' : ''}`}
-                    >
-                      <button
-                        type="button"
-                        className="input-modal-item-main"
-                        title={b.path}
-                        disabled={dirBusy}
-                        onClick={() => applyProjectDir(b.path)}
-                      >
-                        <IconFolder size={12} />
-                        <span className="input-modal-item-name">{b.name}</span>
-                        <span className="input-modal-item-path">{b.path}</span>
-                      </button>
-                      <IconButton
-                        variant="raw"
-                        className="input-modal-item-del"
-                        label={`删除书签 ${b.name}`}
-                        title="删除书签"
-                        onClick={() =>
-                          persistBookmarks(dirBookmarks.filter(x => x.path !== b.path))
-                        }
-                      >
-                        <IconX size={12} />
-                      </IconButton>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="input-modal-label input-modal-label-gap">选择目录</div>
-              <div className="input-modal-input-row">
-                <input
-                  className="input-modal-input"
-                  value={dirInput}
-                  onChange={e => setDirInput(e.target.value)}
-                  placeholder="输入完整路径…"
-                />
-                <Button variant="default" size="sm" onClick={browseProjectDir}>
-                  浏览…
-                </Button>
-              </div>
-              <div className="input-modal-input-row">
-                <input
-                  className="input-modal-input"
-                  value={newBookmarkName}
-                  onChange={e => setNewBookmarkName(e.target.value)}
-                  placeholder="书签名称（留空取目录名）"
-                />
-                <Button
-                  variant="default"
-                  size="sm"
-                  disabled={!dirInput.trim() || dirBusy}
-                  onClick={saveCurrentBookmark}
-                >
-                  保存为书签
-                </Button>
-              </div>
-              <div className="input-modal-actions">
-                <span className="input-modal-feedback">
-                  {dirError ? (
-                    <span className="input-modal-error">{dirError}</span>
-                  ) : (
-                    dirNotice && <span className="input-modal-notice">{dirNotice}</span>
-                  )}
-                </span>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={!dirInput.trim() || dirBusy}
-                  onClick={() => applyProjectDir(dirInput)}
-                >
-                  {dirBusy ? '应用中…' : '应用并切换'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      </CompactModal>
 
       {/* ── Skills Manager Modal ── */}
       {skillsOpen &&
