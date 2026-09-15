@@ -67,11 +67,12 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
     setTimeout(() => setSaved(false), 2000)
   }
 
-  /** 应用（切换）项目目录：落盘 + 通知活跃会话（后端注入 user 内部消息） */
+  /** 应用（切换/清除）项目目录：落盘 + 通知活跃会话（后端注入 user 内部消息）
+   *  空路径 = 清除项目目录（后端有「已清除」分支，界面此前缺入口） */
   const applyDir = useCallback(
     async (path: string) => {
       const target = path.trim()
-      if (!target) return
+      if (!target && !current.path) return
       setBusy(true)
       setError(null)
       try {
@@ -87,7 +88,7 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
         setBusy(false)
       }
     },
-    [onApplied],
+    [onApplied, current.path],
   )
 
   const handleBrowse = async () => {
@@ -173,11 +174,16 @@ export function ProjectCenter({ onApplied }: { onApplied?: (state: ProjectDirSta
             {t('project.addBookmark')}
           </Button>
         </div>
-        {(saved || error) && (
+        {(saved || error || current.path) && (
           <div className="form-footer">
             {saved && <span className="badge badge-success">{t('common.saved')}</span>}
             {error && (
               <span style={{ color: 'var(--error)', fontSize: 'var(--fz-xs)' }}>{error}</span>
+            )}
+            {current.path && (
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => applyDir('')}>
+                清除项目目录
+              </Button>
             )}
           </div>
         )}
