@@ -323,12 +323,6 @@ impl WorkflowAgent {
         self.tools.get_schemas()
     }
 
-    /// 记录「项目目录」状态变化：下一轮随 ACTIVE REMINDERS 注入一次（见 ReminderQueue::set_once）。
-    pub fn set_project_reminder(&mut self, text: String) {
-        self.reminders
-            .set_once(crate::agent::reminders::PROJECT_DIR_REMINDER_ID, text);
-    }
-
     /// Build system prompt (cached)
     fn build_system_prompt(&mut self) -> String {
         if self.cached_prompt.is_none() {
@@ -1192,6 +1186,17 @@ impl WorkflowAgent {
             if let Some(rem) = self.reminders.format_for_prompt() {
                 if !rem.is_empty() {
                     self.session.push_user(rem);
+                }
+            }
+            // 待注入提示（状态变化类：项目目录切换等）：与 reminders 同一注入位，
+            // 轮次边界 drain 一次即消费（执行中写入的提示同样能带到本轮）。
+            let pending_notices = {
+                let mut signals = crate::state::SignalState::write(self.tools.signals());
+                std::mem::take(&mut signals.pending_notices)
+            };
+            for notice in pending_notices {
+                if !notice.is_empty() {
+                    self.session.push_user_internal(notice);
                 }
             }
             let messages = self.session.to_api_messages(self.supports_vision);

@@ -13,9 +13,6 @@
 //! - After LLM actually calls the relevant tool, remove via clear_by_prefix()
 //! - Priorities Critical/High/Normal come with visual markers
 
-/// 项目目录状态提醒的固定 id：同一状态只保留一条（覆盖写入，不随轮次累积）。
-pub const PROJECT_DIR_REMINDER_ID: &str = "project-dir";
-
 /// Reminder priority
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReminderPriority {
@@ -179,28 +176,6 @@ impl ReminderQueue {
             }
             true
         });
-    }
-
-    /// 覆盖写入一条「一次性」状态提醒（固定 id，同 id 覆盖 + 只投递一次）。
-    ///
-    /// 用于**状态变化**（如项目目录切换）：写入后由下一轮注入位随 user 消息带出一次，
-    /// 随即自动失效（max_deliveries = 1），不会每轮重复注入形成噪声；同一 id 再次写入
-    /// 会替换未投递的旧条目（连续切换只保留最新状态）。
-    pub fn set_once(&mut self, id: &str, text: String) {
-        self.items.retain(|r| r.id != id);
-        self.items.push(Reminder {
-            id: id.to_string(),
-            text,
-            max_deliveries: 1,
-            delivered_count: 0,
-            priority: ReminderPriority::Normal,
-            category: ReminderCategory::FlowReminder,
-        });
-    }
-
-    /// 移除指定 id 的状态提醒（如项目目录被清空且旧提示尚未投递）。
-    pub fn clear_state(&mut self, id: &str) {
-        self.items.retain(|r| r.id != id);
     }
 
     /// Clear all reminders (when task completes or is cancelled)

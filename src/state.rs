@@ -41,6 +41,12 @@ pub struct SignalState {
     pub pause_action_id: Option<String>,
     /// 执行中追加消息的真实消费队列，按当前 agent 单一路由。
     pub append_queue: Vec<String>,
+    /// 待注入提示（状态变化类：项目目录切换等）。
+    ///
+    /// 与 append_queue 同构：写入后由下一个轮次边界 drain 注入一次即消费 ——
+    /// 因此**执行中**（agent 被 take 出槽）写入同样有效，提示会随下一轮对话的
+    /// user 消息带出，既不会丢失也不会重复注入。
+    pub pending_notices: Vec<String>,
 
     // ── Security 子系统 ──
     pub security: SecurityState,
@@ -82,5 +88,13 @@ impl SignalState {
     /// 写访问
     pub fn write(signals: &SharedSignals) -> std::sync::RwLockWriteGuard<'_, SignalState> {
         signals.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 写入一条「待注入提示」（状态变化类，如项目目录切换）。
+    ///
+    /// 由下一个轮次边界（react_loop / workflow_agent 的 reminders 注入位）drain
+    /// 一次即消费 —— 执行中（agent 不在槽）调用同样有效，提示不会丢失。
+    pub fn push_notice(signals: &SharedSignals, text: String) {
+        Self::write(signals).pending_notices.push(text);
     }
 }

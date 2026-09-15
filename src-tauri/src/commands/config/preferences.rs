@@ -418,18 +418,10 @@ pub fn set_project_dir(
     prefs.project_dir = path.clone();
     prefs.save().map_err(|e| e.to_string())?;
 
-    // 项目目录变化 → 写入**一次性**提醒：下一轮对话由既有注入位随 user 消息带出一次
-    // （reminders 链路，见 ReminderQueue::set_once），不触碰系统提示前缀缓存，
-    // 也不会每轮重复注入形成噪声。
-    let reminder = project_state_reminder(&path);
-    if let Ok(mut guard) = state.runtime.lock() {
-        if let Some(agent) = guard.leader_agent.as_mut() {
-            agent.set_project_reminder(reminder.clone());
-        }
-        if let Some(agent) = guard.workflow_agent.as_mut() {
-            agent.set_project_reminder(reminder);
-        }
-    }
+    // 项目目录变化 → 写入共享「待注入提示」队列：由下一个轮次边界随 user 消息带出
+    // 一次即消费（与执行中追加指令 append_queue 同一条链路），因此项目目录在**执行中**
+    // 被切换同样不会丢失提示；也不触碰系统提示前缀缓存，不会每轮重复注入。
+    nuphus::state::SignalState::push_notice(&state.signals, project_state_reminder(&path));
 
     tracing::info!("Project dir changed: {} -> {}", old_path, path);
     Ok(project_dir_payload(&path))

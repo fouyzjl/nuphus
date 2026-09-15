@@ -374,6 +374,18 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 }
             }
 
+            // 待注入提示（状态变化类：项目目录切换等）：与 reminders 同一注入位 ——
+            // 轮次边界 drain 一次即消费，执行中（agent 不在槽）写入的提示也能带到本轮。
+            let pending_notices = {
+                let mut signals = crate::state::SignalState::write(self.agent.tools.signals());
+                std::mem::take(&mut signals.pending_notices)
+            };
+            for notice in pending_notices {
+                if !notice.is_empty() {
+                    self.agent.session.push_user_internal(notice);
+                }
+            }
+
             // 门铃事件：与 reminders 同一注入位——轮次边界被动 drain，事件驱动无轮询。
             // 无事件时 drain 返回空 Vec，不注入、不产生日志。
             let handoff_events = crate::handoff::drain_for_injection();
