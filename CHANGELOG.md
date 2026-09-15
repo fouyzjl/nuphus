@@ -1,4 +1,4 @@
-# Changelog
+OK Build ? (1 ?) OK Added ? (1 ?) # Changelog
 
 所有值得注意的变更记录在此文件。
 
@@ -7,7 +7,23 @@
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-09-15
+
 ### Fixed
+- **流式响应被总超时误杀**（`chat_completions`）：reqwest 的 `.timeout()` 语义是「开始连接 → 响应体读完」的总时长，慢上游（实测 2.97 tok/s）生成 1000 tokens 需 ~337s，必然撞上 300s 被杀 → 静默重试 → 用户看到「卡住后重来」。现流式路径取消总时长约束，改由两个「无数据」界限兜底：首包 60s（请求发出 → 收到响应头）+ 块间 60s（idle），超时向前端推送可见提示后再进入下一次尝试。
+- **代理回落方向错误**：`responses` 通道原先无条件套用系统代理；现改为先直连，仅在连接层错误（`is_connect` / `is_timeout`）时才切代理重试，`detect_proxy_url` 由「每次尝试都探测」改为每次请求一次。
+- **本地端点被云端超时口径掐死**（#16）：本地 / 局域网推理服务的耗时由硬件决定（实测 20 万 token 上下文提炼 ≈ 5.5 分钟），而代码写死提炼墙钟 60s(Workflow) / 90s(Leader)、客户端总超时 300s。现新增 `provider::is_local_endpoint`（按 `base_url` 主机判定：loopback / 私网 / mDNS，`10.example.com` 这类域名不会误判）与 `LOCAL_TIMEOUT_FLOOR_SECS = 900` 的**下限**语义（配置更高时以配置为准）；本地端点的首包预算、非流式总超时与提炼墙钟按该口径放大，云端行为不变。
+- **LLM 重试上限过高**：10 → 3（连接类错误 2 次），且等待期内可响应取消，不再出现「点了中断还在后台重试」。
+- **切换模型不作用于运行中的会话**：切换此前只改配置，运行中的会话仍由旧模型作答；现即时绑定当前会话，并把失败原因暴露到界面。
+- **上下文提炼走错模式**：提炼会话未按当前 `current_mode` 路由（Leader / Workflow 两条链路混用），且未校验目标会话是否存在；现按模式路由并前置校验。
+- **自定义服务商被回落成占位地址**：`get_supported_providers` 的内置默认 `base_url` 被前端当成「用户地址」下发，而 custom 的内置默认是文档占位示例 `https://your-custom-api.com/v1`，于是模型拉取报 `error sending request for url (...your-custom-api.com/v1/models)`；后端在 base_url 缺省时也只回落内置默认、不读 `config.toml` 已存地址。现占位地址提为单一常量，新增 `resolve_effective_base_url`（显式 → 已存配置 → 内置默认），命中占位符即判「未配置」并给出可读提示，四条路径（拉取 / 连接测试 / 切换模型 / 保存配置）统一。
+- **项目目录切换的提示会丢失**：切换改走 `SignalState::pending_notices` 共享队列，由 `react_loop` / `workflow_agent` 在轮次边界 drain 一次即消费——执行中（agent 已被 take 出槽）切换也不丢；不再做「每轮比对上次值」的绕路逻辑，无变化就不注入。
+- **项目中心入口与交互**：入口从 Ctrl+K 收敛为输入框常驻 chip（显示当前目录名，支持快捷切换与清除），弹窗复用既有 `CompactModal` 版式并改为「选中 → 应用」两段式；`IPC invoke ... failed: Command not found` 之类原始报错不再直接抛给用户（新增友好化映射）。
+- **会话工作台改为抽屉式**：默认只显示收起的色块，点击展开左栏（移除 hover 感应区与「执行完成自动弹出」）；列表收紧为单行标题 + 行尾相对时间（刚刚 / N 分钟 / N 小时 / N 天）与「展开其余 N 个会话」折叠行；执行中色块不可点击并浮出提示气泡。
+- **HUD 三处实测问题**（#13，macOS）：① Dock 遮挡 —— 定位改用 `Monitor::work_area()`（macOS 即 `NSScreen.visibleFrame`），坐标全程物理像素不做逻辑/物理混算；② Retina 半尺寸 —— `show()` 按逻辑尺寸 × scale 换算后再 `set_size`；③ 拖不动 —— 补 `data-tauri-drag-region="deep"`，后端以坐标比对区分「程序移动 / 用户拖动」，用户拖过之后 `show()` 尊重其位置。顺带：`hud_pause` / `hud_resume` / `hud_stop` 取不到活动工作流时不再静默失败。
+- **工作流步骤面板「关了就再也打不开」**（#14）：面板可见性此前等同 `workflowRunSteps` 非空，而 ✕ 直接清空该数组——误关一次既丢数据、又没有任何入口能找回，面板里的暂停 / 终止 / 紧急停止入口也一起消失（工作流停在 wait 步骤时尤其明显）。现 ✕ 改为只「收起」，面板原位保留「工作流 · N 步」胶囊作为恢复入口，并支持 `Ctrl+Shift+W` 收起 / 展开；「终止」按钮补 `await` + 失败 toast（此前是 unhandled rejection，表现就是「点了终止毫无反应」）。
+- **中断 / 终止停不掉工作流**（#15）：工作流是在一次 `workflow_run` 工具调用内部执行的，执行期 agent 循环阻塞在该调用里，`cancel_flag` 要等工具返回才被检查——而输入栏「中断」只置该标志，对正在运行（或停在 wait 步骤）的工作流完全无效，还返回 `Ok("Task interrupted")` 连报错都没有。现 `interrupt()` 同时取消活动工作流（`engine.cancel_workflow` + `mark_user_cancelled`），移动端 `/interrupt` 复用同一命令；无活动工作流时不再静默跳过。
+- **wait 步骤提示语不做变量替换**（#18）：`do.wait` 是唯一漏掉 `resolve_vars_str` 的 action（chat / script / tool / mcp 都已替换），HUD 与步骤面板把模板占位符原样显示（实测「等待: 已读取到 {{pending_raw}}…」），用户既看不出在等什么、也看不到该步骤本想汇报的内容。
 - 本地服务商（`local`）配置 API Key 后所有请求报 `builder error`：`local.rs` 把 `auth_header()` / `auth_prefix()` 声明为空串（语义是「无内置鉴权」），而注入点直接 `format!("{}{}", prefix, key)` 后交给 `reqwest::RequestBuilder::header`，http crate 把空串判为**非法头名**，最终只抛一句 `builder error`（用户侧表现：`IPC invoke list_provider_models failed: 请求失败: builder error`，极易被误判成网络问题）。现统一走新增的 `config::provider::resolve_auth()`：空 key → 完全不携带鉴权头；未声明鉴权方案 → 按 OpenAI 兼容约定补 `authorization: Bearer <key>`；已声明 header 的 Provider（`x-api-key`、`x-goog-api-key` 等无前缀 scheme）逐字不变。覆盖全部 7 个注入点（list-provider-models / model-meta / vision-probe / chat-completions ×2 / responses / vision_ocr）——其中 `chat_completions` 原先**无条件**注入，本地端点带 key 时聊天同样会挂。
   - 语义依据：实测 llama-swap 只认带 `Bearer ` 前缀的形式（裸 key、空 Bearer、无头均 401）；`voice.rs` / `speech/cloud.rs` 早已用 `("authorization", "Bearer ")` 兜底，「未声明鉴权方案 = 走 OpenAI 兼容约定」是本仓库既有语义，不是新约定。
 - 本地/自定义端点在无鉴权时无法检测与刷新模型：`fetch_provider_models` / `refresh_provider_models` 一律要求非空 key，Ollama / llama.cpp 这类默认无鉴权的端点必须瞎填一个 key 才能连接。现按 Provider 元数据放行空 key（判据为 `auth_header()` 为空串，另加用户自建的 `custom` 端点），且仍不携带任何鉴权头。
@@ -16,9 +32,14 @@
 - 模型页无法拖动窗口：模型页是全屏覆盖层，盖住了 `TitleBar` 的 `data-tauri-drag-region`，而页头自身没挂拖动区，停留在该页面时窗口拖不动。现于页头补一条占满剩余空白的拖动区。
 
 ### Added
+- 剪贴板支持粘贴文件与截图：从资源管理器复制的文件、截图工具复制的图片可直接粘贴进输入栏（此前仅支持纯文本）。
+- 输入栏常驻「项目目录」chip：显示当前目录名，支持一键快捷切换与清除；项目书签统一落 `preferences.project_bookmarks`（收敛此前两套互不相通的键）。
 - 模型页密钥栏对本地服务商开放：可留空直接连接；服务启用鉴权时（llama-swap、带 key 的网关或反向代理）在此填写后再连接。
 - 模型页新增「仅保存密钥」按钮：key 此前只在「点击可用模型」那一步经 `configureLlm` 落盘，服务端鉴权失败、可用模型列表为空时，用户填了 key 却找不到任何保存入口。现以该服务商当前模型（否则已配置的首个模型）作为落盘目标，不依赖「连接」是否成功。
 - ctx 状态区展示解码速度与首 token 延迟：`TokenUsage` 事件新增可选字段 `gen_tps` / `ttft_ms`（`serde(default, skip_serializing_if)`，字段缺失与旧端反序列化均兼容）。速度按「输出 tokens ÷ 首 token→结束耗时」计算，把网络、排队与 prefill 从解码速度中剥离，与 llama.cpp 报告的 decode 速度同口径；TTFT 单独展示。速度与 TTFT 不占常驻状态栏位，明细在 ctx 悬停弹窗（`ttft` / `speed` 两行）。目前仅 Leader 的流式调用（`react_loop`）产出数据，sub-agent 与 workflow 路径固定为 `None`（后续按需接入）。
+
+### Build
+- macOS 开发机上的两处构建缺陷（#17）：① `sync_sherpa_libs()` 只按「体积不同」判陈旧，而 `install_name_tool` 是原地改 load command（体积不变），解耦结果永远刷不到 `target/` 下那两份副本 → `cargo test` / `cargo run` 报 `Library not loaded: @rpath/libonnxruntime.1.27.0.dylib`，判据补「源 mtime 更新」；② arm64 上未签名的 dylib 会被 dyld 直接 SIGKILL（零错误输出，极易误判为测试或代码本身的问题），新增 `ensure_codesign_adhoc()`（先 `codesign --verify` 再决定是否补签，避免无条件重签使 mtime 判据恒真、每次构建白拷 68MB）。
 
 ## [0.2.12] - 2026-09-12
 
