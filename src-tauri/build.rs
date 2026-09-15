@@ -374,6 +374,46 @@ fn ensure_sherpa_libs() {
     );
 }
 
+/// macOS：确保 dylib 带有效 ad-hoc 签名（已有效则**不碰文件**）。
+///
+/// arm64 上每个可执行镜像都必须带有效签名才会被 dyld 加载。两处会让它失效：
+///   · `install_name_tool`（decouple_onnxruntime_name）原地改 load command —— 实测变成
+///     "code object is not signed at all"；
+///   · sherpa / onnxruntime 官方预编译包自身就带 "invalid signature"。
+///
+/// 打包路径靠 `codesign --force --deep --sign -` 重签整个 .app 兜住了，所以**打出来的
+/// app 是好的**；但 `cargo test` / `cargo run` 直接从 target/<profile>/[deps] 加载这些库，
+/// 没有任何一步重签 → 进程被 SIGKILL（signal 9，无任何错误输出），极易被误判成测试
+/// 或代码本身的问题（实测本机 3 条 HUD 单测在补签前全部被 SIGKILL）。
+///
+/// 先 `--verify` 再决定是否签：签名会改写文件、刷新 mtime，无条件重签会让下面的
+/// 「源更新即覆盖」判据每次都成立 → 每次构建都重拷一遍 68MB。
+#[cfg(target_os = "macos")]
+fn ensure_codesign_adhoc(path: &std::path::Path) {
+    let already_valid = std::process::Command::new("codesign")
+        .arg("--verify")
+        .arg(path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if already_valid {
+        return;
+    }
+    match std::process::Command::new("codesign")
+        .args(["--force", "--sign", "-"])
+        .arg(path)
+        .output()
+    {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => println!(
+            "cargo:warning=sherpa-onnx: ad-hoc 签名失败 {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => println!("cargo:warning=sherpa-onnx: 调不起 codesign: {e}"),
+    }
+}
+
 /// 三平台链接 + 运行时库同步：平台链接库存在即链接，并把运行时库拷到
 /// target/<profile>/（exe 同目录）与 deps/（cargo test 二进制目录）。
 fn sync_sherpa_libs() {
@@ -416,14 +456,32 @@ fn sync_sherpa_libs() {
             if !src.exists() {
                 continue;
             }
-            // 尺寸不同即覆盖（onnxruntime 1.26 → 1.27 升级路径）
+            // 先保证**源库**签名有效，这样拷贝过去就带着签名（源与目标体积也一致，
+            // 下面的体积判据不会因为签名而恒真）。已有效时这一步不碰文件。
+            #[cfg(target_os = "macos")]
+            ensure_codesign_adhoc(&src);
+
+            // 陈旧判据 = 尺寸不同 **或** 源更新。
+            // 只看尺寸会漏掉 install_name_tool 的原地改写：它把 load command 里的
+            // libonnxruntime.1.27.0.dylib 换成 libonnxruntime.dylib，**文件大小不变**，
+            // 于是解耦结果永远刷不到 target 下这两份副本 → dev/test 加载到带版本号的
+            // 旧依赖 → dyld 报 "Library not loaded: @rpath/libonnxruntime.1.27.0.dylib"。
+            let src_meta = src.metadata().ok();
+            let src_len = src_meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let src_mtime = src_meta.as_ref().and_then(|m| m.modified().ok());
             let need_copy = match std::fs::metadata(&dest) {
-                Ok(m) => m.len() != src.metadata().map(|s| s.len()).unwrap_or(0),
+                Ok(dest_meta) => {
+                    dest_meta.len() != src_len || dest_meta.modified().ok() < src_mtime
+                }
                 Err(_) => true,
             };
             if need_copy {
                 match std::fs::copy(&src, &dest) {
-                    Ok(_) => println!("cargo:warning=sherpa-onnx: {name} → {}", dest_dir.display()),
+                    Ok(_) => {
+                        println!("cargo:warning=sherpa-onnx: {name} → {}", dest_dir.display());
+                        #[cfg(target_os = "macos")]
+                        ensure_codesign_adhoc(&dest);
+                    }
                     Err(e) => println!("cargo:warning=sherpa-onnx: 拷贝 {name} 失败: {e}"),
                 }
             }
@@ -475,6 +533,9 @@ fn decouple_onnxruntime_name() {
         .arg(&c_api)
         .status();
     println!("cargo:warning=sherpa-onnx: 已解除 onnxruntime 版本耦合: {old} -> {new}");
+    // install_name_tool 会作废原签名（实测变成 "not signed at all"），必须补签，
+    // 否则该库被拷进 target/ 后 dev/test 一加载就被 dyld SIGKILL。
+    ensure_codesign_adhoc(&c_api);
 }
 
 // ─── OCR Model files ─────────────────────────────────────────────
